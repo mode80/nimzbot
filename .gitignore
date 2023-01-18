@@ -1,0 +1,6 @@
+.vscode
+.idea
+.nimcache
+.DS_Store
+lldbnim.py
+yahtzbot.dSYM
