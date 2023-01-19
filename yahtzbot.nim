@@ -21,26 +21,12 @@ type DieVal = u8
 # Utils 
 # -------------------------------------------------------------
 
-## runnableExample:
-##   result =? (tot, maxinarow >= n)
-#TODO turn this into a macro that allows for:  X =? Y if X>0: else: X=1
-#     https://dev.to/beef331/demystification-of-macros-in-nim-13n8 
-proc set_maybe [T] (startval :var T, condval_cond: (T, bool) ) = 
-  let (condval, cond) = condval_cond
-  if cond: startval=condval
-
 macro `:=` (name, value :untyped) :untyped = newVarStmt(name, value)
 
-# a =? 0.iff 1==0 
-# a =? 0.unless 1==0 
-
-proc `=?` [T] (left :var T, right :Option[T] ) = 
+proc set_to[T] (left :var T, right :Option[T] ) = 
   if right!=none(T): left=right.get
 
-proc setTo [T] (left :var T, right :Option[T] ) = 
-  if right!=none(T): left=right.get
-
-func iff [T] (left :T, cond:bool) :Option[T] = 
+func as_long_as [T] (left :T, cond:bool) :Option[T] = 
   if cond: some(left) else: none(T) 
 
 func unless [T] (left :T, cond:bool) :Option[T] = 
@@ -53,7 +39,7 @@ func unless [T] (left :T, cond:bool) :Option[T] =
 
 type DieVals = u16 # 5 dievals, each from 0 to 6, can be encoded in 2 bytes total, each taking 3 bits
 
-func init (self :array[5,int]) :DieVals = # construct a DieVals from an array of 5 DieVal types
+func init_dievals (self :array[5,int]) :DieVals = # construct a DieVals from an array of 5 DieVal types
   for i in 0..4:
     result = result or u16(self[i] shl (i * 3))
 
@@ -83,9 +69,7 @@ func score_n_of_a_kind(n :int, sorted_dievals :DieVals) :u8 =
         maxinarow = max(inarow,maxinarow)
         lastval = x
         tot+=x
-    result = if maxinarow >= n: (tot) else: (0) 
-    result.set_maybe (tot, maxinarow >= n)
-    # result = tot unless (maxinarow>=n)
+    result.set_to tot .as_long_as maxinarow>=n  # TODO test performance of this sugar
 
 # straight_len(sorted_dievals) ::u8 = let
 #     inarow=1 
@@ -161,16 +145,9 @@ func score_n_of_a_kind(n :int, sorted_dievals :DieVals) :u8 =
 when isMainModule:
 
   # test some stuff
-  # let dv = [1,2,3,4,5].init
-  # for d in dv.items: 
-  #   echo repr(d)
+  let dievals = init_dievals([1,2,2,2,3])
+  assert dievals[0] == 1
 
-  a := 1
-  b := 2
+  echo score_n_of_a_kind(3, dievals )
 
-  a =? 0 .iff 1==0 
-  echo a
-
-  b.set_to 0 .unless 1==0 
-  echo b
-
+  echo score_upper_box(3, dievals )
