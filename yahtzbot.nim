@@ -17,6 +17,11 @@ type Slot = u8
 type Choice = u8
 type DieVal = u8 
 
+type SlotType = enum 
+  ACES=1, TWOS, THREES, FOURS, FIVES, SIXES,  
+  THREE_OF_A_KIND, FOUR_OF_A_KIND, FULL_HOUSE, 
+  SM_STRAIGHT, LG_STRAIGHT, YAHTZEE, CHANCE
+
 # proc `+`(a, b :DieVal) :DieVal {.borrow.} # imbue DieVal with addability 
 
 # -------------------------------------------------------------
@@ -124,29 +129,30 @@ func score_chance(sorted_dievals :DieVals) :u8 =
     
 func score_yahtzee(sorted_dievals :DieVals) :u8 =
     let dv = sorted_dievals
-    if (dv[0] == dv[4] and dv[0] != 0): result = 50
+    if dv[0]==dv[4] and dv[0]!=0: result = 50
 
-# # reports the score for a set of dice in a given slot w/o regard for exogenous gamestate (bonuses, yahtzee wildcards etc) 
-# score_slot_with_dice(slot::Slot, sorted_dievals) ::u8 = let
-#     if slot==ACES return score_aces(sorted_dievals) end 
-#     if slot==TWOS return score_twos(sorted_dievals) end 
-#     if slot==THREES return score_threes(sorted_dievals) end 
-#     if slot==FOURS return score_fours(sorted_dievals) end 
-#     if slot==FIVES return score_fives(sorted_dievals) end 
-#     if slot==SIXES return score_sixes(sorted_dievals) end 
-#     if slot==THREE_OF_A_KIND return score_three_of_a_kind(sorted_dievals) end 
-#     if slot==FOUR_OF_A_KIND return score_four_of_a_kind(sorted_dievals) end 
-#     if slot==SM_STRAIGHT return score_sm_str8(sorted_dievals) end 
-#     if slot==LG_STRAIGHT return score_lg_str8(sorted_dievals) end 
-#     if slot==FULL_HOUSE return score_fullhouse(sorted_dievals) end 
-#     if slot==CHANCE return score_chance(sorted_dievals) end 
-#     if slot==YAHTZEE return score_yahtzee(sorted_dievals) end 
-# end
+# reports the score for a set of dice in a given slot w/o regard for exogenous gamestate (bonuses, yahtzee wildcards etc) 
+func score_slot_with_dice(slot :Slot, sorted_dievals :DieVals) :u8 =
+    case SlotType slot
+    of ACES: return score_aces sorted_dievals 
+    of TWOS: return score_twos sorted_dievals 
+    of THREES: return score_threes sorted_dievals 
+    of FOURS: return score_fours sorted_dievals 
+    of FIVES: return score_fives sorted_dievals 
+    of SIXES: return score_sixes sorted_dievals 
+    of THREE_OF_A_KIND: return score_three_of_a_kind sorted_dievals 
+    of FOUR_OF_A_KIND: return score_four_of_a_kind sorted_dievals 
+    of SM_STRAIGHT: return score_sm_str8 sorted_dievals 
+    of LG_STRAIGHT: return score_lg_str8 sorted_dievals 
+    of FULL_HOUSE: return score_fullhouse sorted_dievals 
+    of CHANCE: return score_chance sorted_dievals 
+    of YAHTZEE: return score_yahtzee sorted_dievals 
 
 when isMainModule:
 
   # test some stuff
-  let dievals = init_dievals([2,2,2,2,2])
+  let dievals = init_dievals([2,2,2,3,3])
 
   echo score_chance(dievals)
   echo score_yahtzee(dievals)
+  echo score_slot_with_dice(7, dievals)
