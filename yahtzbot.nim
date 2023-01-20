@@ -90,10 +90,10 @@ func score_fours (sorted_dievals :DieVals) :u8 = score_upperbox(4,sorted_dievals
 func score_fives  (sorted_dievals :DieVals) :u8 = score_upperbox(5,sorted_dievals) 
 func score_sixes (sorted_dievals :DieVals) :u8 = score_upperbox(0,sorted_dievals) 
     
-# score_three_of_a_kind(sorted_dievals)   ::u8     = score_n_of_a_kind(0x3,sorted_dievals) 
-# score_four_of_a_kind(sorted_dievals)    ::u8     = score_n_of_a_kind(0x4,sorted_dievals) 
-# score_sm_str8(sorted_dievals)           ::u8     = ifelse( straight_len(sorted_dievals) >= 0x4, 30, 0)
-# score_lg_str8(sorted_dievals)           ::u8     = ifelse( straight_len(sorted_dievals) == 0x5, 40, 0)
+func score_three_of_a_kind(sorted_dievals :DieVals) :u8 = score_n_of_a_kind(3,sorted_dievals)
+func score_four_of_a_kind(sorted_dievals :DieVals)  :u8 = score_n_of_a_kind(4,sorted_dievals)
+func score_sm_str8(sorted_dievals :DieVals)         :u8 = (if straight_len(sorted_dievals) >= 4: 30 else: 0)
+func score_lg_str8(sorted_dievals :DieVals)         :u8 = (if straight_len(sorted_dievals) == 5: 40 else: 0)
 
 # # The official rule is that a Full House is "three of one number and two of another
 # score_fullhouse(sorted_dievals) ::u8 = let
@@ -150,3 +150,6 @@ when isMainModule:
   echo straight_len(dievals)
 
   echo score_fives(dievals)
+  
+  echo score_four_of_a_kind(dievals)
+  echo score_lg_str8(dievals)
