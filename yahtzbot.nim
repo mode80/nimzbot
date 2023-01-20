@@ -53,6 +53,12 @@ iterator items (self :DieVals) :DieVal =
     let val = (self shr (i * 3)) and 7
     yield val.DieVal
 
+iterator pairs (self :DieVals) :(int,DieVal) =
+  for i in 0..4: 
+    let val = (self shr (i * 3)) and 7
+    yield (i, val.DieVal)
+
+
 # -------------------------------------------------------------
 # SCORING FNs
 # -------------------------------------------------------------
@@ -95,27 +101,22 @@ func score_four_of_a_kind(sorted_dievals :DieVals)  :u8 = score_n_of_a_kind(4,so
 func score_sm_str8(sorted_dievals :DieVals)         :u8 = (if straight_len(sorted_dievals) >= 4: 30 else: 0)
 func score_lg_str8(sorted_dievals :DieVals)         :u8 = (if straight_len(sorted_dievals) == 5: 40 else: 0)
 
-# # The official rule is that a Full House is "three of one number and two of another
-# score_fullhouse(sorted_dievals) ::u8 = let
-   
-#     valcounts1 = valcounts2 = 0
-#     j=0
+# The official rule is that a Full House is "three of one number and two of another
+func score_fullhouse(sorted_dievals :DieVals) :u8 = 
+ 
+  var valcounts1, valcounts2, j :int 
 
-#     for (i,val) in enumerate(sorted_dievals) 
-#         if val==0 return 0 end
-#         if (j==0 || sorted_dievals[i]!=sorted_dievals[i-1]) 
-#             j+=1 
-#         end
-#         if j==1 valcounts1+=1 end
-#         if j==2 valcounts2+=1 end
-#         if j==3 return 0 end
-#     end
+  for i, val in sorted_dievals:
+    if val==0: return 0
+    if j==0 or sorted_dievals[i]!=sorted_dievals[i-1]: inc j
+    if j==1: valcounts1+=1
+    if j==2: valcounts2+=1
+    if j==3: return 0
 
-#     if valcounts1==3 && valcounts2==2 || valcounts2==3 && valcounts1==2 return 25 end
-#     return 0 
+  if (valcounts1==3 and valcounts2==2) or (valcounts2==3 and valcounts1==2): return 25 
+  return 0 
 
-# end 
-    
+  
 # score_chance(sorted_dievals) ::u8 = sum(sorted_dievals) 
     
 # score_yahtzee(sorted_dievals) ::u8 =
@@ -141,15 +142,7 @@ func score_lg_str8(sorted_dievals :DieVals)         :u8 = (if straight_len(sorte
 when isMainModule:
 
   # test some stuff
-  let dievals = init_dievals([1,2,3,4,5])
+  let dievals = init_dievals([2,2,2,3,3])
 
-  echo score_n_of_a_kind(3, dievals )
+  echo score_full_house(dievals)
 
-  echo score_upper_box(3, dievals )
-
-  echo straight_len(dievals)
-
-  echo score_fives(dievals)
-  
-  echo score_four_of_a_kind(dievals)
-  echo score_lg_str8(dievals)
