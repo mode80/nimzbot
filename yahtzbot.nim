@@ -1,6 +1,7 @@
 import macros
 import options
 import tables
+import sequtils
 
 # {.experimental: "codeReordering".}
 {. hint[XDeclaredButNotUsed]:off .}
@@ -116,11 +117,14 @@ func score_fullhouse(sorted_dievals :DieVals) :u8 =
   if (valcounts1==3 and valcounts2==2) or (valcounts2==3 and valcounts1==2): return 25 
   return 0 
 
-  
-# score_chance(sorted_dievals) ::u8 = sum(sorted_dievals) 
+func score_chance(sorted_dievals :DieVals) :u8 = 
+  #foldr(sorted_dievals, a + b) # too much sugar for this 
+  let dv = sorted_dievals
+  return dv[0]+dv[1]+dv[2]+dv[3]+dv[4]
     
-# score_yahtzee(sorted_dievals) ::u8 =
-#     (sorted_dievals[1] == sorted_dievals[5] != 0) ? 50 : 0 
+func score_yahtzee(sorted_dievals :DieVals) :u8 =
+    let dv = sorted_dievals
+    if (dv[0] == dv[4] and dv[0] != 0): result = 50
 
 # # reports the score for a set of dice in a given slot w/o regard for exogenous gamestate (bonuses, yahtzee wildcards etc) 
 # score_slot_with_dice(slot::Slot, sorted_dievals) ::u8 = let
@@ -142,7 +146,7 @@ func score_fullhouse(sorted_dievals :DieVals) :u8 =
 when isMainModule:
 
   # test some stuff
-  let dievals = init_dievals([2,2,2,3,3])
+  let dievals = init_dievals([2,2,2,2,2])
 
-  echo score_full_house(dievals)
-
+  echo score_chance(dievals)
+  echo score_yahtzee(dievals)
