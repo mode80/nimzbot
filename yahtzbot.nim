@@ -1,5 +1,6 @@
 import macros
 import options
+import tables
 
 # {.experimental: "codeReordering".}
 {. hint[XDeclaredButNotUsed]:off .}
@@ -63,29 +64,24 @@ func score_upperbox (slot :Slot, sorted_dievals :DieVals) :u8 =
   return sum 
 
 func score_n_of_a_kind(n :int, sorted_dievals :DieVals) :u8 = 
-    var inarow=1; var maxinarow=1; var lastval=100.u8; var tot=0.u8; 
-    for x in sorted_dievals:
-        if x==lastval and x!=0.DieVal: inarow+=1 else: inarow=1 
-        maxinarow = max(inarow,maxinarow)
-        lastval = x
-        tot+=x
-    result.set_to tot .as_long_as maxinarow>=n  # TODO test performance of this sugar
+  var inarow=1; var maxinarow=1; var lastval=100.u8; var tot=0.u8; 
+  for x in sorted_dievals:
+    if x==lastval and x!=0.DieVal: inarow+=1 else: inarow=1 
+    maxinarow = max(inarow,maxinarow)
+    lastval = x
+    tot+=x
+  result .set_to tot .as_long_as maxinarow >= n  # TODO test performance of this sugar
 
-# straight_len(sorted_dievals) ::u8 = let
-#     inarow=1 
-#     lastval=254 # stub
-#     maxinarow=1
-#     for x in sorted_dievals 
-#         if (x==lastval+1 && x!=0) 
-#             inarow+=1 
-#         elseif x!=lastval 
-#             inarow=1 
-#         end
-#         maxinarow = max(inarow,maxinarow)
-#         lastval = x
-#     end  
-#     maxinarow 
-# end
+func straight_len(sorted_dievals :DieVals) :u8 = 
+  var inarow:u8 = 1 
+  var lastval= uint8.high # stub
+  for x in sorted_dievals:
+    if x==lastval+1 and x!=0:
+      inarow+=1 
+    elif x!=lastval: 
+      inarow=1 
+    result = max(inarow, result)
+    lastval = x
 
 # score_aces(sorted_dievals)      ::u8         = score_upperbox(0x1,sorted_dievals)   
 # score_twos(sorted_dievals)      ::u8         = score_upperbox(0x2,sorted_dievals) 
@@ -145,9 +141,11 @@ func score_n_of_a_kind(n :int, sorted_dievals :DieVals) :u8 =
 when isMainModule:
 
   # test some stuff
-  let dievals = init_dievals([1,2,2,2,3])
-  assert dievals[0] == 1
+  let dievals = init_dievals([1,2,3,4,5])
 
   echo score_n_of_a_kind(3, dievals )
 
   echo score_upper_box(3, dievals )
+
+  echo straight_len(dievals)
+
