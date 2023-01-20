@@ -83,12 +83,12 @@ func straight_len(sorted_dievals :DieVals) :u8 =
     result = max(inarow, result)
     lastval = x
 
-# score_aces(sorted_dievals)      ::u8         = score_upperbox(0x1,sorted_dievals)   
-# score_twos(sorted_dievals)      ::u8         = score_upperbox(0x2,sorted_dievals) 
-# score_threes(sorted_dievals)    ::u8         = score_upperbox(0x3,sorted_dievals) 
-# score_fours(sorted_dievals)     ::u8         = score_upperbox(0x4,sorted_dievals) 
-# score_fives(sorted_dievals)     ::u8         = score_upperbox(0x5,sorted_dievals) 
-# score_sixes(sorted_dievals)     ::u8         = score_upperbox(0x6,sorted_dievals) 
+func score_aces  (sorted_dievals :DieVals) :u8 = score_upperbox(1,sorted_dievals)   
+func score_twos  (sorted_dievals :DieVals) :u8 = score_upperbox(2,sorted_dievals) 
+func score_threes(sorted_dievals :DieVals) :u8 = score_upperbox(3,sorted_dievals) 
+func score_fours (sorted_dievals :DieVals) :u8 = score_upperbox(4,sorted_dievals) 
+func score_fives  (sorted_dievals :DieVals) :u8 = score_upperbox(5,sorted_dievals) 
+func score_sixes (sorted_dievals :DieVals) :u8 = score_upperbox(0,sorted_dievals) 
     
 # score_three_of_a_kind(sorted_dievals)   ::u8     = score_n_of_a_kind(0x3,sorted_dievals) 
 # score_four_of_a_kind(sorted_dievals)    ::u8     = score_n_of_a_kind(0x4,sorted_dievals) 
@@ -149,3 +149,4 @@ when isMainModule:
 
   echo straight_len(dievals)
 
+  echo score_fives(dievals)
