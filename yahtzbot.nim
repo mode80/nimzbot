@@ -45,7 +45,7 @@ func factorial(n:int) :int=
 
 # count of arrangements that can be formed from r selections, chosen from n items, 
 # where order DOES or DOESNT matter, and WITH or WITHOUT replacement, as specified.
-func n_take_r(n :int, r :int, order_matters :bool = false, with_replacement:bool = false) :int= 
+func n_take_r (n :int, r :int, order_matters :bool = false, with_replacement :bool = false) :int= 
   if (order_matters): # order matters; we're counting "permutations" 
     if (with_replacement): 
       return n^r
@@ -57,7 +57,7 @@ func n_take_r(n :int, r :int, order_matters :bool = false, with_replacement:bool
     else : # no replacement
       return factorial(n) div (factorial(r)*factorial(n-r));
 
-proc combos_with_rep[T](lst: seq[T], k: int): seq[seq[T]] =
+proc combos_with_rep [T] (lst: seq[T], k: int): seq[seq[T]] =
   if k == 0:
     @[newSeq[T]()]
   elif lst.len == 0:
@@ -67,16 +67,186 @@ proc combos_with_rep[T](lst: seq[T], k: int): seq[seq[T]] =
     & lst[1..^1].combos_with_rep(k)
 
 func distinct_arrangements_for [T] (dieval_seq :seq[T]) :f32 = 
-    let key_counts = dieval_seq.toCountTable
-    var divisor = 1
-    var non_zero_dievals = 0
-    for key, count in key_counts:  
-        if key != 0:  
-            divisor *= factorial(count)
-            non_zero_dievals += count
-    return f32( factorial(non_zero_dievals) / divisor )
+  let key_counts = dieval_seq.toCountTable
+  var divisor = 1
+  var non_zero_dievals = 0
+  for key, count in key_counts: 
+    if key != 0: 
+      divisor *= factorial(count)
+      non_zero_dievals += count
+  return factorial(non_zero_dievals) / divisor 
+
+func powerset [T] (set :seq[T]) :seq[seq[T]] =
+  let count :int = 2^set.len # set_size of power set of a set with set_size n is (2**n -1)
+  var i, j :int
+  for i in 0..<count: # Run from counter 000..0 to 111..1
+    var innerList = newSeqOfCap[T](count) 
+    # Check each jth bit in the counter is set If set then add jth element from set 
+    for j in 0..<set.len: 
+      if (i and (1 shl j)) > 0: innerList .add set[j]
+    result .add innerList
+  return result
 
 #[
+
+#-------------------------------------------------------------
+# INITIALIZERS etc 
+#-------------------------------------------------------------
+
+const RANGE_IDX_FOR_SELECTION: array[32,int] = [0,1,2,3,7,4,8,11,17,5,9,12,20,14,18,23,27,6,10,13,19,15,21,24,28,16,22,25,29,26,30,31] 
+# DieValsID SORTED_DIEVALS [32767]; 
+
+proc cache_selection_ranges() = 
+    let s = 0
+    let idxs0to4 = @[0, 1, 2, 3, 4]
+    let result_count = 0
+    let combos = powerset(idxs0to4, result_count)
+
+
+    for i in 0..<result_count:
+        let sets_count = n_take_r(6, combos[i].count, false, true)
+        SELECTION_RANGES[i] = (s, s + sets_count)
+        s += sets_count
+    discard combos
+
+# this generates the ranges that correspond to the outcomes, within the set of all outcomes, indexed by a give selection 
+void cache_selection_ranges() {
+
+    int s = 0;
+
+    Ints8 idxs0to4 = (Ints8){5, {0,1,2,3,4} };
+    size_t result_count = 0; 
+    Ints8* combos = powerset( idxs0to4, &result_count);
+
+    for(int i=0; i<result_count; i++) {
+        int sets_count = n_take_r(6, combos[i].count, false, true); 
+        SELECTION_RANGES[i] = (Range16){s, s+sets_count}; 
+        s += sets_count;
+    } 
+
+    free(combos);
+}
+
+
+Range16 SELECTION_RANGES[32];  //new Range[32];  
+DieVals OUTCOME_DIEVALS[1683]; //new u16[1683]  //these 3 arrays mirror that in OUTCOMES but are contiguous and faster to access
+DieVals OUTCOME_MASKS[1683]; // new u16[1683] 
+f32 OUTCOME_ARRANGEMENTS[1683]; //new f32[1683]  //TODO test making this a u8 for cacheline efficiency
+EV* EV_CACHE; // 2^29 indexes hold all game state EVs
+Choice* CHOICE_CACHE; // 2^29 indexes hold all corresponding Choices
+
+Ints32 SELECTION_SET_OF_ALL_DICE_ONLY; //  selections are bitfields where '1' means roll and '0' means don't roll 
+Ints32 SELECTION_SET_OF_ALL_POSSIBLE_SELECTIONS; // Ints32 type can hold 32 different selections 
+
+
+
+void init_caches(){
+
+    OUTCOME_EVS_BUFFER = malloc(NUM_THREADS * sizeof(f32*));
+    for (int i = 0; i < NUM_THREADS; i++) { OUTCOME_EVS_BUFFER[i] = malloc(1683 * sizeof(f32)); }
+
+    NEWVALS_BUFFER = malloc(NUM_THREADS * sizeof(u16*));
+    for (int i = 0; i < NUM_THREADS; i++) { NEWVALS_BUFFER[i] = malloc(1683 * sizeof(DieVals)); }
+
+    EVS_TIMES_ARRANGEMENTS_BUFFER = malloc(NUM_THREADS * sizeof(f32*));
+    for (int i = 0; i < NUM_THREADS; i++) { EVS_TIMES_ARRANGEMENTS_BUFFER[i] = malloc(1683 * sizeof(f32)); }
+
+    # setup helper values
+    cache_selection_ranges(); 
+    cache_sorted_dievals(); 
+    cache_roll_outcomes_data();
+
+    # selection sets
+    SELECTION_SET_OF_ALL_DICE_ONLY = (Ints32){ 1, 0b11111 }; //  selections are bitfields where '1' means roll and '0' means don't roll 
+    SELECTION_SET_OF_ALL_POSSIBLE_SELECTIONS = (Ints32){}; // Ints32 type can hold 32 different selections 
+    for(int i=0b00000; i<=0b11111; i++) SELECTION_SET_OF_ALL_POSSIBLE_SELECTIONS.arr[i]=i; 
+    SELECTION_SET_OF_ALL_POSSIBLE_SELECTIONS.count=32;
+
+    //gignormous cache for holding EVs of all game states
+    EV_CACHE = malloc(pow(2,29) * sizeof(EV)); // 2^29 slots hold all unique game states 
+    CHOICE_CACHE = malloc(pow(2,29) * sizeof(Choice)); // 2^29 slots hold all unique game states 
+ 
+}
+
+
+// for fast access later, this generates an array of dievals in sorted form, 
+// along with each's unique "ID" between 0-252, indexed by DieVals data
+void cache_sorted_dievals() { 
+    
+    SORTED_DIEVALS[0] = (DieValsID){}; // first one is for the special wildcard 
+    Ints8 one_to_six = {.count=6, .arr={1,2,3,4,5,6} }; 
+    int combos_size;
+    Ints8* combos = get_combos_with_replacement(one_to_six, 5, &combos_size);
+    int perm_count=0;
+    for (int i=0; i<combos_size; i++) {
+        DieVals dv_sorted = dievals_from_ints8(combos[i]);
+        Ints8* ints8_perms = get_unique_perms(combos[i], &perm_count);
+        for (int j=0; j<perm_count; j++) {
+            Ints8 perm = ints8_perms[j];
+            DieVals dv_perm = dievals_from_ints8(perm);
+            SORTED_DIEVALS[dv_perm] = (DieValsID){.dievals=dv_sorted, .id=i};
+        }
+    }
+}
+
+
+//preps the caches of roll outcomes data for every possible 5-die selection, where '0' represents an unselected die """
+void cache_roll_outcomes_data() { 
+
+    int i=0; size_t idx_combo_count=0; 
+    Ints8* idx_combos = powerset( (Ints8){.count=5,.arr={0,1,2,3,4}}, &idx_combo_count );
+    assert(idx_combo_count==32); 
+    Ints8 one_thru_six = {6, {1,2,3,4,5,6}}; 
+
+    for (int v=0; v<idx_combo_count; v++) { 
+        int dievals_arr[5] = {0,0,0,0,0}; 
+        Ints8 idx_combo = idx_combos[v];
+        int die_count = idx_combo.count; 
+        
+        int die_combos_size = 0;
+        // combos_with_rep(one_thru_six, 6, die_count, &result, &combos_size); 
+        Ints8* die_combos = get_combos_with_replacement(one_thru_six, die_count, &die_combos_size);
+ 
+        for (int w=0; w<die_combos_size; w++) {
+            Ints8 die_combo = die_combos[w];
+            int mask_vec[5] = {0b111,0b111,0b111,0b111,0b111};
+            for(int j=0; j<die_count; j++) {
+                int idx = idx_combo.arr[j];
+                dievals_arr[idx] = (DieVal)die_combo.arr[j];
+                mask_vec[idx]=0;
+            }
+            f32 arrangement_count = distinct_arrangements_for(die_combo);
+            DieVals dievals = dievals_from_arr5(dievals_arr);
+            DieVals mask = dievals_from_arr5(mask_vec);
+            OUTCOME_DIEVALS[i] = dievals;
+            OUTCOME_MASKS[i] = mask;
+            OUTCOME_ARRANGEMENTS[i] = arrangement_count;
+            i+=1;
+            assert(i<=1683);
+        } 
+
+        free(die_combos);
+    } 
+    free(idx_combos);
+} 
+
+void init_bar_for(GameState game) {
+    tick_limit = counts(game);
+    tick_interval = (tick_limit) / 100;
+    printf("Progress: %d%%\r", 0);
+    fflush(stdout);
+} 
+
+void tick(){
+    ticks++;
+    if (ticks % tick_interval == 0) {
+        printf("Progress: %d%%\r", (int)(ticks * 100 / tick_limit));
+        // printf("█");
+        fflush(stdout);
+    }
+}
+
+
 
 // returns a range which corresponds the precomputed dice roll outcome data corresponding to the given selection
 func outcomes_range_for(_ selection :Selection) -> Range<Int>{
@@ -226,6 +396,8 @@ when isMainModule:
 
   # test some stuff
   
-  # Test for distinct_arrangements_for
-  let dieval_seq = @[2, 2, 3]
-  echo distinct_arrangements_for(dieval_seq) 
+
+# Test for powerset
+    let mySet = @[1, 2, 3]
+    let myPowerset = powerset(mySet)
+    echo myPowerset# == @[[], [1], [2], [3], [1, 2], [1, 3], [2, 3], [1, 2, 3]]
