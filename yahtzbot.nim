@@ -2,6 +2,7 @@ import macros
 import options
 import tables
 import sequtils
+import math
 
 # {.experimental: "codeReordering".}
 {. hint[XDeclaredButNotUsed]:off .}
@@ -9,6 +10,7 @@ import sequtils
 type u8 = uint8
 type u16 = uint16
 type u32 = uint32
+type u64 = uint64
 type f32 = float32
 type f64 = float64 # lazy Rust-like abbreviations
 
@@ -22,10 +24,8 @@ type SlotType = enum
   THREE_OF_A_KIND, FOUR_OF_A_KIND, FULL_HOUSE, 
   SM_STRAIGHT, LG_STRAIGHT, YAHTZEE, CHANCE
 
-# proc `+`(a, b :DieVal) :DieVal {.borrow.} # imbue DieVal with addability 
-
 # -------------------------------------------------------------
-# Utils 
+# UTILS 
 # -------------------------------------------------------------
 
 macro `:=` (name, value :untyped) :untyped = newVarStmt(name, value)
@@ -39,6 +39,90 @@ func as_long_as [T] (left :T, cond:bool) :Option[T] =
 func unless [T] (left :T, cond:bool) :Option[T] = 
   if not cond: some(left) else: none(T) 
 
+func factorial(n:int) :int= 
+  if (n<=1): return 1
+  return n * factorial(n-1)
+
+# count of arrangements that can be formed from r selections, chosen from n items, 
+# where order DOES or DOESNT matter, and WITH or WITHOUT replacement, as specified.
+func n_take_r(n :int, r :int, order_matters :bool = false, with_replacement:bool = false) :int= 
+  if (order_matters): # order matters; we're counting "permutations" 
+    if (with_replacement): 
+      return n^r
+    else: # no replacement
+      return factorial(n) div factorial(n-r) # this = factorial(n) when r=n
+  else : # we're counting "combinations" where order doesn't matter; there are less of these 
+    if (with_replacement) :
+      return factorial(n+r-1) div (factorial(r)*factorial(n-1));
+    else : # no replacement
+      return factorial(n) div (factorial(r)*factorial(n-r));
+
+
+#[
+
+func combos_with_rep<T>(elements: ArraySlice<T>, k: Int) -> [[T]] {
+    if k == 0 { return [[]] }
+    guard let first = elements.first else { return [] }
+    let head = [first]
+    let subcombos = combos_with_rep(elements: elements, k: k - 1)
+    var ret = subcombos.map { head + $0 }
+    ret += combos_with_rep(elements: elements.dropFirst(), k: k)
+    return ret
+}
+
+func combos_with_rep<T>(_ elements: Array<T>, _ k: Int) -> [[T]] {
+    return combos_with_rep(elements: ArraySlice(elements), k: k)
+}
+
+func distinct_arrangements_for(_ dieval_vec:[DieVal]) -> f32 { 
+    // var key_counts = dieval_vec.GroupBy(x=>x).Select(g=>(g.Key, (u8)g.Count()));
+    let key_counts = Dictionary(grouping: dieval_vec, by: { $0 }).mapValues { $0.count } // group val with counts
+    var divisor:UInt=1
+    var non_zero_dievals:UInt=0
+    for (key, count) in key_counts{  
+        if (key != 0){  
+            divisor *= factorial(UInt(count))
+            non_zero_dievals += UInt(count)
+        } 
+    } 
+    return f32( factorial(non_zero_dievals) / divisor )
+} 
+
+// returns a range which corresponds the precomputed dice roll outcome data corresponding to the given selection
+func outcomes_range_for(_ selection :Selection) -> Range<Int>{
+    let idx = RANGE_IDX_FOR_SELECTION[Int(selection)];
+    let range = SELECTION_RANGES[idx]; // for @inbounds, see https://blog.tedd.no/2020/06/01/faster-c-array-access/
+    return range;
+} 
+
+func print_state_choices_header() { 
+    print("choice_type,choice,dice,rolls_remaining,upper_total,yahtzee_bonus_avail,open_slots,expected_value");
+} 
+
+// should produce one line of output kinda like ...
+// D,01111,65411,2,31,Y,1_3_4_6_7_8_11_,119.23471
+// S,13,66641,0,11,Y,3_4_5_9_10_13_,113.45208
+func print_state_choice(_ state :GameState , _ choice_ev: ChoiceEV ) { 
+    let Y="Y"; let N="N"; let S="S"; let D="D"; let C=","; // TODO hoist these to constants
+    var sb:String=""; sb.reserveCapacity(60)
+    if (state.rolls_remaining==0){ // for slot choice 
+        sb += (S); sb+=(C);
+        sb += (choice_ev.choice.description); // for dice choice 
+    } else {
+        sb+=(D); sb+=(C);
+        sb+=("00000"+choice_ev.choice.description).suffix(5)
+    }
+    sb+=(C);
+    sb+=(state.sorted_dievals.description); sb+=(C);
+    sb+=(state.rolls_remaining.description); sb+=(C);
+    sb+=(state.upper_total.description); sb+=(C);
+    sb+=(state.yahtzee_bonus_avail ? Y : N); sb+=(C);
+    sb+=(state.open_slots.description); sb+=(C);
+    sb+=String(format: "%.2f", choice_ev.ev)
+    print(sb);
+} 
+
+]#
 
 # -------------------------------------------------------------
 # DieVals
@@ -151,8 +235,17 @@ func score_slot_with_dice(slot :Slot, sorted_dievals :DieVals) :u8 =
 when isMainModule:
 
   # test some stuff
-  let dievals = init_dievals([2,2,2,3,3])
+  
+  # Test for n_take_r with order_matters = true and with_replacement = false
+  assert n_take_r(5, 3, true, false) == 60
 
-  echo score_chance(dievals)
-  echo score_yahtzee(dievals)
-  echo score_slot_with_dice(7, dievals)
+  # Test for n_take_r with order_matters = false and with_replacement = true
+  assert n_take_r(5, 3, false, true) == 35
+
+  # Test for n_take_r with order_matters = false and with_replacement = false
+  assert n_take_r(5, 3, false, false) == 10
+  
+  # Test for n_take_r with order_matters = true and with_replacement = true
+  assert n_take_r(5, 3, true, true) == 125
+
+  echo("All tests passed!")
