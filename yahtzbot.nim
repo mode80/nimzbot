@@ -57,36 +57,26 @@ func n_take_r(n :int, r :int, order_matters :bool = false, with_replacement:bool
     else : # no replacement
       return factorial(n) div (factorial(r)*factorial(n-r));
 
+proc combos_with_rep[T](lst: seq[T], k: int): seq[seq[T]] =
+  if k == 0:
+    @[newSeq[T]()]
+  elif lst.len == 0:
+    @[]
+  else:
+    lst.combos_with_rep(k-1).mapIt(lst[0] & it) 
+    & lst[1..^1].combos_with_rep(k)
+
+func distinct_arrangements_for [T] (dieval_seq :seq[T]) :f32 = 
+    let key_counts = dieval_seq.toCountTable
+    var divisor = 1
+    var non_zero_dievals = 0
+    for key, count in key_counts:  
+        if key != 0:  
+            divisor *= factorial(count)
+            non_zero_dievals += count
+    return f32( factorial(non_zero_dievals) / divisor )
 
 #[
-
-func combos_with_rep<T>(elements: ArraySlice<T>, k: Int) -> [[T]] {
-    if k == 0 { return [[]] }
-    guard let first = elements.first else { return [] }
-    let head = [first]
-    let subcombos = combos_with_rep(elements: elements, k: k - 1)
-    var ret = subcombos.map { head + $0 }
-    ret += combos_with_rep(elements: elements.dropFirst(), k: k)
-    return ret
-}
-
-func combos_with_rep<T>(_ elements: Array<T>, _ k: Int) -> [[T]] {
-    return combos_with_rep(elements: ArraySlice(elements), k: k)
-}
-
-func distinct_arrangements_for(_ dieval_vec:[DieVal]) -> f32 { 
-    // var key_counts = dieval_vec.GroupBy(x=>x).Select(g=>(g.Key, (u8)g.Count()));
-    let key_counts = Dictionary(grouping: dieval_vec, by: { $0 }).mapValues { $0.count } // group val with counts
-    var divisor:UInt=1
-    var non_zero_dievals:UInt=0
-    for (key, count) in key_counts{  
-        if (key != 0){  
-            divisor *= factorial(UInt(count))
-            non_zero_dievals += UInt(count)
-        } 
-    } 
-    return f32( factorial(non_zero_dievals) / divisor )
-} 
 
 // returns a range which corresponds the precomputed dice roll outcome data corresponding to the given selection
 func outcomes_range_for(_ selection :Selection) -> Range<Int>{
@@ -236,16 +226,6 @@ when isMainModule:
 
   # test some stuff
   
-  # Test for n_take_r with order_matters = true and with_replacement = false
-  assert n_take_r(5, 3, true, false) == 60
-
-  # Test for n_take_r with order_matters = false and with_replacement = true
-  assert n_take_r(5, 3, false, true) == 35
-
-  # Test for n_take_r with order_matters = false and with_replacement = false
-  assert n_take_r(5, 3, false, false) == 10
-  
-  # Test for n_take_r with order_matters = true and with_replacement = true
-  assert n_take_r(5, 3, true, true) == 125
-
-  echo("All tests passed!")
+  # Test for distinct_arrangements_for
+  let dieval_seq = @[2, 2, 3]
+  echo distinct_arrangements_for(dieval_seq) 
