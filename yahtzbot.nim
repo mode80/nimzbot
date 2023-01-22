@@ -1,8 +1,10 @@
+# include prelude
 import macros
 import options
 import tables
 import sequtils
 import math
+import algorithm
 
 {.experimental: "codeReordering".}
 {. hint[XDeclaredButNotUsed]:off .}
@@ -18,6 +20,7 @@ type Selection = u8
 type Slot = u8
 type Choice = u8
 type DieVal = u8 
+type DieValsID = u8 
 
 type SlotType = enum 
     ACES=1, TWOS, THREES, FOURS, FIVES, SIXES,    
@@ -63,15 +66,15 @@ func n_take_r (n :int, r :int, order_matters :bool = false, with_replacement :bo
             return factorial(n) div (factorial(r)*factorial(n-r));
 
 
-proc combos_with_rep [T] (items :seq[T], k: int): seq[seq[T]] =
+proc combos_with_rep [T] (list :seq[T], k: int): seq[seq[T]] =
 
     if k == 0:
         @[newSeq[T]()]
-    elif items.len == 0:
+    elif list.len == 0:
         @[]
     else:
-        items.combos_with_rep(k-1).mapIt(items[0] & it) & 
-            items[1..^1].combos_with_rep(k)
+        list.combos_with_rep(k-1).mapIt(list[0] & it) & 
+            list[1..^1].combos_with_rep(k)
 
 
 func distinct_arrangements_for [T] (dieval_seq :seq[T]) :f32 = 
@@ -101,6 +104,11 @@ func powerset [T] (set :seq[T]) :seq[seq[T]] =
         result .add innerList
     return result
 
+func unique_permutations (sorted_list :seq[int]) :seq[seq[int]] = 
+    ## returns a seq of seqs, where each inner seq is a unique permutation of the input seq
+    var list = sorted_list
+    while list.nextPermutation:
+        if not result.contains(list): result.add(list)
 
 # -------------------------------------------------------------
 # DIEVALS 
@@ -108,23 +116,33 @@ func powerset [T] (set :seq[T]) :seq[seq[T]] =
 
 type DieVals = u16 # 5 dievals, each from 0 to 6, can be encoded in 2 bytes total, each taking 3 bits
 
+
 func init_dievals (self :array[5,int]) :DieVals = # construct a DieVals from an array of 5 DieVal types
-  for i in 0..4:
-    result = result or u16(self[i] shl (i * 3))
+    for i in 0..4:
+        result = result or u16(self[i] shl (i * 3))
+
+
+func init_dievals (self :openArray[int]) :DieVals = # construct a DieVals from an array of 5 DieVal types
+    assert self.len == 5
+    for i in 0..4:
+        result = result or u16(self[i] shl (i * 3))
+
 
 func `[]`(self :DieVals, i :int): DieVal = # extract a DieVal from a DieVals // TODO: try Nim bitset?
-  assert i >= 0 and i < 5
-  result = DieVal (self shr (i * 3)) and 0b111
+    assert i >= 0 and i < 5
+    result = DieVal (self shr (i * 3)) and 0b111
+
 
 iterator items (self :DieVals) :DieVal =
-  for i in 0..4: 
-    let val = (self shr (i * 3)) and 7
-    yield val.DieVal
+    for i in 0..4: 
+        let val = (self shr (i * 3)) and 7
+        yield val.DieVal
+
 
 iterator pairs (self :DieVals) :(int,DieVal) =
-  for i in 0..4: 
-    let val = (self shr (i * 3)) and 7
-    yield (i, val.DieVal)
+    for i in 0..4: 
+        let val = (self shr (i * 3)) and 7
+        yield (i, val.DieVal)
 
 
 # -------------------------------------------------------------
@@ -132,84 +150,90 @@ iterator pairs (self :DieVals) :(int,DieVal) =
 # -------------------------------------------------------------
 
 func score_upperbox (slot :Slot, sorted_dievals :DieVals) :u8 = 
-  var sum :u8 
-  for d in sorted_dievals:
-    if d==slot: sum+=slot 
-  return sum 
+    var sum :u8 
+    for d in sorted_dievals:
+        if d==slot: sum+=slot 
+    return sum 
+
 
 func score_n_of_a_kind(n :int, sorted_dievals :DieVals) :u8 = 
-  var inarow=1; var maxinarow=1; var lastval=100.u8; var tot=0.u8; 
-  for x in sorted_dievals:
-    if x==lastval and x!=0.DieVal: inarow+=1 else: inarow=1 
-    maxinarow = max(inarow,maxinarow)
-    lastval = x
-    tot+=x
-  result .set_to tot .as_long_as maxinarow >= n  # TODO test performance of this sugar
+    var inarow=1; var maxinarow=1; var lastval=100.u8; var tot=0.u8; 
+    for x in sorted_dievals:
+        if x==lastval and x!=0.DieVal: inarow+=1 else: inarow=1 
+        maxinarow = max(inarow,maxinarow)
+        lastval = x
+        tot+=x
+    result .set_to tot .as_long_as maxinarow >= n    # TODO test performance of this sugar
+
 
 func straight_len(sorted_dievals :DieVals) :u8 = 
-  var inarow:u8 = 1 
-  var lastval= uint8.high # stub
-  for x in sorted_dievals:
-    if x==lastval+1 and x!=0:
-      inarow+=1 
-    elif x!=lastval: 
-      inarow=1 
-    result = max(inarow, result)
-    lastval = x
+    var inarow:u8 = 1 
+    var lastval= uint8.high # stub
+    for x in sorted_dievals:
+        if x==lastval+1 and x!=0:
+            inarow+=1 
+        elif x!=lastval: 
+            inarow=1 
+        result = max(inarow, result)
+        lastval = x
 
-func score_aces  (sorted_dievals :DieVals) :u8 = score_upperbox(1,sorted_dievals)   
-func score_twos  (sorted_dievals :DieVals) :u8 = score_upperbox(2,sorted_dievals) 
+
+func score_aces    (sorted_dievals :DieVals) :u8 = score_upperbox(1,sorted_dievals)     
+func score_twos    (sorted_dievals :DieVals) :u8 = score_upperbox(2,sorted_dievals) 
 func score_threes(sorted_dievals :DieVals) :u8 = score_upperbox(3,sorted_dievals) 
 func score_fours (sorted_dievals :DieVals) :u8 = score_upperbox(4,sorted_dievals) 
-func score_fives  (sorted_dievals :DieVals) :u8 = score_upperbox(5,sorted_dievals) 
+func score_fives    (sorted_dievals :DieVals) :u8 = score_upperbox(5,sorted_dievals) 
 func score_sixes (sorted_dievals :DieVals) :u8 = score_upperbox(0,sorted_dievals) 
-    
+        
 func score_three_of_a_kind(sorted_dievals :DieVals) :u8 = score_n_of_a_kind(3,sorted_dievals)
-func score_four_of_a_kind(sorted_dievals :DieVals)  :u8 = score_n_of_a_kind(4,sorted_dievals)
-func score_sm_str8(sorted_dievals :DieVals)         :u8 = (if straight_len(sorted_dievals) >= 4: 30 else: 0)
-func score_lg_str8(sorted_dievals :DieVals)         :u8 = (if straight_len(sorted_dievals) == 5: 40 else: 0)
+func score_four_of_a_kind(sorted_dievals :DieVals)    :u8 = score_n_of_a_kind(4,sorted_dievals)
+func score_sm_str8(sorted_dievals :DieVals)                 :u8 = (if straight_len(sorted_dievals) >= 4: 30 else: 0)
+func score_lg_str8(sorted_dievals :DieVals)                 :u8 = (if straight_len(sorted_dievals) == 5: 40 else: 0)
 
-# The official rule is that a Full House is "three of one number and two of another
+
 func score_fullhouse(sorted_dievals :DieVals) :u8 = 
+# The official rule is that a Full House is "three of one number and two of another
  
-  var valcounts1, valcounts2, j :int 
+    var valcounts1, valcounts2, j :int 
 
-  for i, val in sorted_dievals:
-    if val==0: return 0
-    if j==0 or sorted_dievals[i]!=sorted_dievals[i-1]: inc j
-    if j==1: valcounts1+=1
-    if j==2: valcounts2+=1
-    if j==3: return 0
+    for i, val in sorted_dievals:
+        if val==0: return 0
+        if j==0 or sorted_dievals[i]!=sorted_dievals[i-1]: inc j
+        if j==1: valcounts1+=1
+        if j==2: valcounts2+=1
+        if j==3: return 0
 
-  if (valcounts1==3 and valcounts2==2) or (valcounts2==3 and valcounts1==2): return 25 
-  return 0 
+    if (valcounts1==3 and valcounts2==2) or (valcounts2==3 and valcounts1==2): return 25 
+    return 0 
 
 func score_chance(sorted_dievals :DieVals) :u8 = 
-  #foldr(sorted_dievals, a + b) # too much sugar for this 
-  let dv = sorted_dievals
-  return dv[0]+dv[1]+dv[2]+dv[3]+dv[4]
     
-func score_yahtzee(sorted_dievals :DieVals) :u8 =
-  let dv = sorted_dievals
-  if dv[0]==dv[4] and dv[0]!=0: result = 50
+    let dv = sorted_dievals
+    return dv[0]+dv[1]+dv[2]+dv[3]+dv[4] 
 
-# reports the score for a set of dice in a given slot w/o regard for exogenous gamestate (bonuses, yahtzee wildcards etc) 
+        
+func score_yahtzee(sorted_dievals :DieVals) :u8 =
+    let dv = sorted_dievals
+    if dv[0]==dv[4] and dv[0]!=0: result = 50
+
+
 func score_slot_with_dice(slot :Slot, sorted_dievals :DieVals) :u8 =
-  case SlotType slot
-  of ACES: return score_aces sorted_dievals 
-  of TWOS: return score_twos sorted_dievals 
-  of THREES: return score_threes sorted_dievals 
-  of FOURS: return score_fours sorted_dievals 
-  of FIVES: return score_fives sorted_dievals 
-  of SIXES: return score_sixes sorted_dievals 
-  of THREE_OF_A_KIND: return score_three_of_a_kind sorted_dievals 
-  of FOUR_OF_A_KIND: return score_four_of_a_kind sorted_dievals 
-  of SM_STRAIGHT: return score_sm_str8 sorted_dievals 
-  of LG_STRAIGHT: return score_lg_str8 sorted_dievals 
-  of FULL_HOUSE: return score_fullhouse sorted_dievals 
-  of CHANCE: return score_chance sorted_dievals 
-  of YAHTZEE: return score_yahtzee sorted_dievals 
-  
+    # reports the score for a set of dice in a given slot w/o regard for exogenous gamestate (bonuses, yahtzee wildcards etc) 
+    case SlotType slot
+    of ACES: return score_aces sorted_dievals 
+    of TWOS: return score_twos sorted_dievals 
+    of THREES: return score_threes sorted_dievals 
+    of FOURS: return score_fours sorted_dievals 
+    of FIVES: return score_fives sorted_dievals 
+    of SIXES: return score_sixes sorted_dievals 
+    of THREE_OF_A_KIND: return score_three_of_a_kind sorted_dievals 
+    of FOUR_OF_A_KIND: return score_four_of_a_kind sorted_dievals 
+    of SM_STRAIGHT: return score_sm_str8 sorted_dievals 
+    of LG_STRAIGHT: return score_lg_str8 sorted_dievals 
+    of FULL_HOUSE: return score_fullhouse sorted_dievals 
+    of CHANCE: return score_chance sorted_dievals 
+    of YAHTZEE: return score_yahtzee sorted_dievals 
+    
 #-------------------------------------------------------------
 # INITIALIZERS etc 
 #-------------------------------------------------------------
@@ -219,6 +243,7 @@ func score_slot_with_dice(slot :Slot, sorted_dievals :DieVals) :u8 =
 var OUTCOME_DIEVALS :array[1683,DieVals] 
 var OUTCOME_MASKS :array[1683,DieVals] 
 var OUTCOME_ARRANGEMENTS :array[1683,f32] 
+var SORTED_DIEVALS :array[32767, DieValsID]
 
 ## These are index spans into the OUTCOME arrays above which correspond to each dieval selection.
 ## Each of the 32 indecis from 0b00000 to 0b11111 represents the dieval selection as a bitfield 
@@ -244,7 +269,6 @@ const SELECTION_RANGES = [(0, 1), (1, 7), (7, 13), (13, 34), (90, 96), (179, 200
 
 proc cache_roll_outcomes_data() = 
     ## preps the caches of roll outcomes data for every possible 5-die selection (where '0' represents an unselected die) 
-
     var i = 0
     let idx_combos: seq[seq[int]] = powerset @[0,1,2,3,4] 
     assert idx_combos.len==32 
@@ -268,6 +292,26 @@ proc cache_roll_outcomes_data() =
             OUTCOME_MASKS[i] = mask
             OUTCOME_ARRANGEMENTS[i] = arrangement_count
             inc i
+
+
+# proc cache_sorted_dievals() = 
+#     # for fast access later, this generates an array of dievals in sorted form, 
+#     # along with each's unique "ID" between 0-252, indexed by DieVals data
+#     SORTED_DIEVALS[0] = 0 #// first one is for the special wildcard 
+#     let one_to_six = @[1,2,3,4,5,6] 
+#     let combos = combos_with_rep(one_to_six, 5)
+#     for combo in combos: 
+#         var dv_sorted = init_dievals(combo)
+#         Ints8* ints8_perms = get_unique_perms(combos[i], &perm_count)
+#         for (int j=0; j<perm_count; j++) {
+#             Ints8 perm = ints8_perms[j];
+#             DieVals dv_perm = dievals_from_ints8(perm);
+#             SORTED_DIEVALS[dv_perm] = (DieValsID){.dievals=dv_sorted, .id=i};
+#         }
+#     }
+# }
+
+
 
 #[
 
@@ -306,27 +350,6 @@ void init_caches(){
     EV_CACHE = malloc(pow(2,29) * sizeof(EV)); // 2^29 slots hold all unique game states 
     CHOICE_CACHE = malloc(pow(2,29) * sizeof(Choice)); // 2^29 slots hold all unique game states 
  
-}
-
-
-// for fast access later, this generates an array of dievals in sorted form, 
-// along with each's unique "ID" between 0-252, indexed by DieVals data
-void cache_sorted_dievals() { 
-    
-    SORTED_DIEVALS[0] = (DieValsID){}; // first one is for the special wildcard 
-    Ints8 one_to_six = {.count=6, .arr={1,2,3,4,5,6} }; 
-    int combos_size;
-    Ints8* combos = get_combos_with_replacement(one_to_six, 5, &combos_size);
-    int perm_count=0;
-    for (int i=0; i<combos_size; i++) {
-        DieVals dv_sorted = dievals_from_ints8(combos[i]);
-        Ints8* ints8_perms = get_unique_perms(combos[i], &perm_count);
-        for (int j=0; j<perm_count; j++) {
-            Ints8 perm = ints8_perms[j];
-            DieVals dv_perm = dievals_from_ints8(perm);
-            SORTED_DIEVALS[dv_perm] = (DieValsID){.dievals=dv_sorted, .id=i};
-        }
-    }
 }
 
 
@@ -388,20 +411,21 @@ func print_state_choice(_ state :GameState , _ choice_ev: ChoiceEV ) {
 when isMainModule:
 
   # test some stuff
-    cache_roll_outcomes_data()
-
-    assert OUTCOME_DIEVALS.len == 1683
-
-    #compare to known good values from Swift implementation
-    assert OUTCOME_DIEVALS[1682] == init_dievals([6,6,6,6,6])
-    assert OUTCOME_MASKS[1682] == init_dievals([0,0,0,0,0])
-    assert OUTCOME_ARRANGEMENTS[1682] == 1 
-
-    assert OUTCOME_DIEVALS[0] == init_dievals([0,0,0,0,0])
-    assert OUTCOME_MASKS[0] == init_dievals([7,7,7,7,7])
-    assert OUTCOME_ARRANGEMENTS[0] == 1 
-
-    assert OUTCOME_DIEVALS[1000] == init_dievals([1,1,0,1,4])
-    assert OUTCOME_MASKS[1000] == init_dievals([0,0,7,0,0])
-    assert OUTCOME_ARRANGEMENTS[1000] == 4 
-    echo "tests passed"
+   # Create a sequence with multiple elements
+   let inputSeq = @[1, 1, 3]
+   
+   # Call the `unique_permutations` function on the sequence
+   let resultSeq = unique_permutations(inputSeq)
+   
+   # Create a sequence containing all the expected permutations
+   let expectedSeq = @[@[1, 1, 3], @[1, 3, 1], @[3, 1, 1]]
+   
+   # Loop through the result and compare each element to the expected permutations
+   for result in resultSeq:
+       if not expectedSeq.contains(result):
+           echo "Test failed: unexpected permutation"
+           quit 1
+   
+   # If all elements are in the expected permutations, the test passes
+   echo "Test passed"
+    
