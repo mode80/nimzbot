@@ -1,3 +1,7 @@
+# -------------------------------------------------------------
+# TOP
+# -------------------------------------------------------------
+
 # include prelude
 import macros
 import options
@@ -110,23 +114,7 @@ func unique_permutations (sorted_list :seq[int]) :seq[seq[int]] =
 # DIEVALS 
 # -------------------------------------------------------------
 
-# type DieFace = enum 
-#     ONE=1, TWO, THREE, FOUR, FIVE, SIX
-
-# type DieValSet= set[DieFace]
-
-# type DieValSet= set[u8]
-
 type DieVals = distinct u16 # 5 dievals, each from 0 to 6, can be encoded in 2 bytes total, each taking 3 bits
-
-# func init_dievals (self :array[5,int]) :DieVals = # construct a DieVals from an array of 5 DieVal types
-#     for i in 0..4:
-#         result = result or u16(self[i] shl (i * 3))
-
-# func init_dievals (self :openArray[int]) :DieVals = # construct a DieVals from an array of 5 DieVal types
-#     assert self.len == 5
-#     for i in 0..4:
-#         result = result or u16(self[i] shl (i * 3))
 
 
 func init_dievals(d1 :int, d2 :int, d3 :int, d4 :int, d5 :int) :DieVals = # construct a DieVals from 5 int args 
@@ -143,14 +131,6 @@ func toDieVals (it:array[5,int]) :DieVals = # convert an array of 5 ints to a Di
 func toDieVals (it :seq[int]) :DieVals = # convert a seq of 5 ints to a DieVals
     assert it.len == 5
     var intout :int = 0
-    for i in 0..4:
-        intout = intout or it[i] shl (i * 3)
-    result = intout.DieVals
-
-
-func toDieVals (it :openArray[int]) :DieVals = # convert an array or seq of 5 ints to a DieVals
-    assert it.len == 5
-    var intout :int = 1
     for i in 0..4:
         intout = intout or it[i] shl (i * 3)
     result = intout.DieVals
@@ -200,12 +180,136 @@ func `$`(self) :string = # convert a DieVals to a string
         let val = (int_self shr (i * 3)) and 7
         result.add $val
 
-# type DieValsID = tuple[  #TODO test splitting for separate SORTED_DIEVALS and SORTED_DIEVAL_IDS (better cache line usage)
-#     dievals : DieVals, 
-#     id :u8  # the id is a kind of offset that later helps us fast-index into the EV_CACHE 
-#             # it's also an 8-bit handle to the sorted DieVals version, for more compact storage in a 32bit GameState ID
-# ]
+#-------------------------------------------------------------
+# SLOTS 
+#-------------------------------------------------------------
 
+#[
+Slots slots_empty() { return 0; } 
+
+Slots slots_init_va(int arg_count, ... ) {
+    u16 result =0;
+    u16 mask = 0; 
+
+    va_list args; //varargs args ceremony
+    va_start (args, arg_count); // " " "
+
+    for (int i = 0; i < arg_count; i++){ 
+        mask = 0x0001 << (u16)(va_arg(args, int));  // va_arg returns and advances the next arg 
+        result |= mask; // force on
+    }
+    return result;
+}
+
+Slots slots_from_ints16(Ints16 slots) {
+    u16 result = 0;
+    u16 mask = 0; 
+    for (int i = 0; i < slots.count; i++){ 
+        mask = 0x0001 << (u16)(slots.arr[i]);  
+        result |= mask; // force on
+    }
+    return result;
+}
+
+Slot slots_get(Slots self, int index) {
+    u16 bits = self;
+    u16 bit_index=0;
+    int i = index+1;
+    int j=1; //the slots data does not use the rightmost (0th) bit 
+    while (j <= i){ 
+        bit_index = countTrailingZeros(bits);
+        bits = (bits & (~( 1 << bit_index) ));  //unset bit
+        j+=1;
+    } 
+    return (Slot)bit_index;
+}
+
+bool slots_has(Slots self, Slot slot){ 
+    return 0x0000 < (self & (0x0001<<(u16)(slot)));
+} 
+
+int slots_count(Slots self){ 
+    int len = 0;
+    for (int i=1; i<=13; i++){ if (slots_has(self, i)) {len++;} }
+    return len; 
+} 
+
+Slots slots_removing(Slots self, Slot slot_to_remove) { 
+    u16 mask = ~( 1 << slot_to_remove );
+    return (self & mask); //# force off
+} 
+
+int* ZERO_THRU_63 = (int[64]){0,1,2,3,4,5,6,7,8,9, 10,11,12,13,14,15,16,17,18,19,
+        20,21,22,23,24,25,26,27,28,29, 30,31,32,33,34,35,36,37,38,39,
+        40,41,42,43,44,45,46,47,48,49, 50,51,52,53,54,55,56,57,58,59, 60,61,62,63};
+
+Slots used_upper_slots(Slots unused_slots) {
+    Slots all_bits_except_unused = ~unused_slots; // "unused" slots are not "previously used", so blank those out
+    Slots all_upper_slot_bits = (u16) ((1<<7)-2);  // upper slot bits are those from 2^1 through 2^6 (encoding doesn't use 2^0)
+    Slots previously_used_upper_slot_bits = (u16) (all_bits_except_unused & all_upper_slot_bits);
+    return previously_used_upper_slot_bits;
+} 
+
+void slots_powerset(Slots self, Slots* out, int* out_len) { 
+    int len = slots_count(self);
+    int powerset_len = 1 << len;
+    int powerset_index = 0;
+    for (int i=0; i<powerset_len; i++){ 
+        int j = i;
+        int k = 0;
+        Slots subset = slots_empty();
+        while (j > 0) { 
+            if (j & 1) { subset |= (0x0001 << slots_get(self, k)); }
+            j >>= 1;
+            k += 1;
+        } 
+        out[powerset_index] = subset;
+        powerset_index += 1;
+    } 
+    *out_len = powerset_len;
+}
+
+u8 best_upper_total(Slots slots) {  
+    u8 sum=0;
+    for (int i=1; i<=6; i++) { 
+        if (slots_has(slots, i)) { sum+=i; }
+    } 
+    return sum*5;
+} 
+
+// a non-exact but fast estimate of relevant_upper_totals
+// ie the unique and relevant "upper bonus total" that could have occurred from the previously used upper slots
+Ints64 useful_upper_totals(Slots unused_slots) { 
+    int totals[64]; 
+    memcpy(totals, ZERO_THRU_63, 64*sizeof(int)); // init to 0 thru 63
+    Slots used_uppers = used_upper_slots(unused_slots);
+    bool all_even = true;
+    int count = slots_count(used_uppers);
+    for (int i=0; i<count; i++){ 
+        Slot slot = slots_get(used_uppers, i);
+        if (slot % 2 == 1) {all_even = false; break;} 
+    }
+    if (all_even) { // stub out odd totals if the used uppers are all even 
+        for (int i=0; i<64; i++){ 
+            if (totals[i]%2==1) totals[i] = SENTINEL;
+        } 
+    } 
+
+    // filter out the lowish totals that aren't relevant because they can't reach the goal with the upper slots remaining 
+    // this filters out a lot of dead state space but means the lookup function must later map extraneous deficits to a default 
+    int best_unused_slot_total = best_upper_total(unused_slots);
+    // totals = (x for x in totals if x + best_unused_slot_total >=63 || x==0)
+    // totals = from x in totals where (x + best_unused_slot_total >=63 || x==0) select x
+    Ints64 result = {};
+    for (int i=0; i<64; i++){ 
+        if (totals[i]!=SENTINEL && totals[i] + best_unused_slot_total >= 63 || totals[i]==0) {
+            result.arr[result.count]=totals[i];
+            result.count++;
+        }
+    }
+    return result;  
+}
+]#
 
 # -------------------------------------------------------------
 # SCORING FNs
@@ -260,7 +364,7 @@ func score_lg_str8         (sorted_dievals) :u8 = (if straight_len(sorted_dieval
 
 func score_fullhouse(sorted_dievals) :u8 = 
 # The official rule is that a Full House is "three of one number and two of another
- 
+
     var valcounts1, valcounts2, j :int 
 
     for i, val in sorted_dievals:
@@ -300,10 +404,10 @@ func score_slot_with_dice(slot, sorted_dievals) :u8 =
     of FULL_HOUSE: return score_fullhouse sorted_dievals 
     of CHANCE: return score_chance sorted_dievals 
     of YAHTZEE: return score_yahtzee sorted_dievals 
-    
-#-------------------------------------------------------------
-# INITIALIZERS 
-#-------------------------------------------------------------
+        
+# -------------------------------------------------------------
+# INITIALIZERS etc
+# -------------------------------------------------------------
 
 ## These are index spans into the OUTCOME_ arrays below which correspond to each dieval selection.
 ## Each of the 32 indecis from 0b00000 to 0b11111 represents the dieval selection as a bitfield 
@@ -341,7 +445,7 @@ proc cache_roll_outcomes() =
         let die_count = idx_combo.len 
         
         let combos = combos_with_rep(one_thru_six, die_count) 
- 
+
         for die_combo in combos:
             var mask_arr = [0b111,0b111,0b111,0b111,0b111]
             for j, idx in idx_combo:
@@ -376,8 +480,6 @@ proc init_caches() =
     cache_sorted_dievals() 
     cache_roll_outcomes()
 
-
-
 #[
 
 
@@ -396,15 +498,6 @@ void tick(){
         fflush(stdout);
     }
 }
-
-
-
-// returns a range which corresponds the precomputed dice roll outcome data corresponding to the given selection
-func outcomes_range_for(_ selection :Selection) -> Range<Int>{
-    let idx = RANGE_IDX_FOR_SELECTION[Int(selection)];
-    let range = SELECTION_RANGES[idx]; // for @inbounds, see https://blog.tedd.no/2020/06/01/faster-c-array-access/
-    return range;
-} 
 
 func print_state_choices_header() { 
     print("choice_type,choice,dice,rolls_remaining,upper_total,yahtzee_bonus_avail,open_slots,expected_value");
@@ -435,6 +528,17 @@ func print_state_choice(_ state :GameState , _ choice_ev: ChoiceEV ) {
 
 ]#
 
+# -------------------------------------------------------------
+# GAMESTATE 
+# -------------------------------------------------------------
+
+#-------------------------------------------------------------
+# BUILD CACHE 
+#-------------------------------------------------------------
+        
+#-------------------------------------------------------------
+# MAIN
+#-------------------------------------------------------------
 
 when isMainModule:
 
@@ -444,3 +548,4 @@ when isMainModule:
     cache_sorted_dievals()
     var dv_sorted = SORTED_DIEVALS[dv.int]
     echo $dv_sorted
+    echo $(2351.u16)
