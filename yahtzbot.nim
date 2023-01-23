@@ -6,7 +6,7 @@ import sequtils
 import math
 import algorithm
 
-{.experimental: "codeReordering".}
+# {.experimental: "codeReordering".}
 {. hint[XDeclaredButNotUsed]:off .}
 
 type u8 = uint8
@@ -117,7 +117,7 @@ func unique_permutations (sorted_list :seq[int]) :seq[seq[int]] =
 
 # type DieValSet= set[u8]
 
-type DieVals = u16 # 5 dievals, each from 0 to 6, can be encoded in 2 bytes total, each taking 3 bits
+type DieVals = distinct u16 # 5 dievals, each from 0 to 6, can be encoded in 2 bytes total, each taking 3 bits
 
 # func init_dievals (self :array[5,int]) :DieVals = # construct a DieVals from an array of 5 DieVal types
 #     for i in 0..4:
@@ -130,55 +130,81 @@ type DieVals = u16 # 5 dievals, each from 0 to 6, can be encoded in 2 bytes tota
 
 
 func init_dievals(d1 :int, d2 :int, d3 :int, d4 :int, d5 :int) :DieVals = # construct a DieVals from 5 int args 
-    result = u16(d1) or u16(d2 shl 3) or u16(d3 shl 6) or u16(d4 shl 9) or u16(d5 shl 12)
+    result = DieVals(u16(d1) or u16(d2 shl 3) or u16(d3 shl 6) or u16(d4 shl 9) or u16(d5 shl 12))
+
 
 func toDieVals (it:array[5,int]) :DieVals = # convert an array of 5 ints to a DieVals
+    var intout :int = 0
     for i in 0..4:
-        result = result or u16(it[i] shl (i * 3))
+        intout = intout or it[i] shl (i * 3)
+    result = intout.DieVals
+
 
 func toDieVals (it :seq[int]) :DieVals = # convert a seq of 5 ints to a DieVals
     assert it.len == 5
+    var intout :int = 0
     for i in 0..4:
-        result = result or u16(it[i] shl (i * 3))
+        intout = intout or it[i] shl (i * 3)
+    result = intout.DieVals
+
 
 func toDieVals (it :openArray[int]) :DieVals = # convert an array or seq of 5 ints to a DieVals
     assert it.len == 5
+    var intout :int = 1
     for i in 0..4:
-        result = result or u16(it[i] shl (i * 3))
+        intout = intout or it[i] shl (i * 3)
+    result = intout.DieVals
+
 
 using self: DieVals # declare self to be of DieVals for below methods
 
+
 func toIntSeq(self) :seq[int] = # convert a DieVals to a seq of 5 ints
+    var int_self = self.int
     for i in 0..4:
-        let val = (self shr (i * 3)) and 7
+        let val = (int_self shr (i * 3)) and 7
         result.add val.int
 
+
 func toIntArray(self) :array[5,int] = # convert a DieVals to a array of 5 ints
+    var int_self = self.int
     for i in 0..4:
-        let val = (self shr (i * 3)) and 7
+        let val = (int_self shr (i * 3)) and 7
         result[i] = val.int
+
 
 func `[]`(self; i :int): DieVal = # extract a DieVal from a DieVals // TODO: try Nim bitset?
     assert i >= 0 and i < 5
-    result = DieVal (self shr (i * 3)) and 0b111
+    var int_self = self.int
+    result = DieVal (int_self shr (i * 3)) and 0b111
 
 
 iterator items(self) :DieVal =
+    var int_self = self.int
     for i in 0..4: 
-        let val = (self shr (i * 3)) and 7
+        let val = (int_self shr (i * 3)) and 7
         yield val.DieVal
 
 
 iterator pairs(self) :(int,DieVal) =
+    var int_self = self.int
     for i in 0..4: 
-        let val = (self shr (i * 3)) and 7
+        let val = (int_self shr (i * 3)) and 7
         yield (i, val.DieVal)
 
-type DieValsID = tuple[  #TODO test splitting for separate SORTED_DIEVALS and SORTED_DIEVAL_IDS (better cache line usage)
-    dievals : DieVals, 
-    id :u8  # the id is a kind of offset that later helps us fast-index into the EV_CACHE 
-            # it's also an 8-bit handle to the sorted DieVals version, for more compact storage in a 32bit GameState ID
-]
+
+func `$`(self) :string = # convert a DieVals to a string
+    result = ""
+    var int_self = self.int
+    for i in 0..4:
+        let val = (int_self shr (i * 3)) and 7
+        result.add $val
+
+# type DieValsID = tuple[  #TODO test splitting for separate SORTED_DIEVALS and SORTED_DIEVAL_IDS (better cache line usage)
+#     dievals : DieVals, 
+#     id :u8  # the id is a kind of offset that later helps us fast-index into the EV_CACHE 
+#             # it's also an 8-bit handle to the sorted DieVals version, for more compact storage in a 32bit GameState ID
+# ]
 
 
 # -------------------------------------------------------------
@@ -276,17 +302,10 @@ func score_slot_with_dice(slot, sorted_dievals) :u8 =
     of YAHTZEE: return score_yahtzee sorted_dievals 
     
 #-------------------------------------------------------------
-# INITIALIZERS etc 
+# INITIALIZERS 
 #-------------------------------------------------------------
 
-# DieValsID SORTED_DIEVALS [32767]; 
-
-var OUTCOME_DIEVALS :array[1683,DieVals] 
-var OUTCOME_MASKS :array[1683,DieVals] 
-var OUTCOME_ARRANGEMENTS :array[1683,f32] 
-var SORTED_DIEVALS :array[32767, DieValsID]
-
-## These are index spans into the OUTCOME arrays above which correspond to each dieval selection.
+## These are index spans into the OUTCOME_ arrays below which correspond to each dieval selection.
 ## Each of the 32 indecis from 0b00000 to 0b11111 represents the dieval selection as a bitfield 
 const SELECTION_RANGES = [(0, 1), (1, 7), (7, 13), (13, 34), (90, 96), (179, 200), (592, 613), 
     (34, 90), (96, 102), (200, 221), (613, 634), (102, 158), (221, 242), (634, 690), (263, 319), 
@@ -294,25 +313,23 @@ const SELECTION_RANGES = [(0, 1), (1, 7), (7, 13), (13, 34), (90, 96), (179, 200
     (340, 466), (928, 949), (1067, 1123), (1249, 1305), (466, 592), (949, 1005), (1123, 1249), 
     (1305, 1431), (1431, 1683)] # = cache_selection_ranges()   # TODO confirm these are correct
 
-# var SELECTION_RANGES = static(cache_selection_ranges())
+## these are filled with cache_roll_outcomes()
+var OUTCOME_DIEVALS :array[1683,DieVals] 
+var OUTCOME_MASKS :array[1683,DieVals] 
+var OUTCOME_ARRANGEMENTS :array[1683,f32] 
 
-# const SELECTION_RANGES = cache_selection_ranges()
+# these are filled with cache_sorted_dievals()
+var SORTED_DIEVALS :array[32767, DieVals]
+var SORTED_DIEVAL_IDS :array[32767, u8]
 
-# func cache_selection_ranges() :seq[(u16,u16)] = #TODO confirm the order of the powerset corresponds to RANGE_IDX_FOR_SELECTION
-#     ## this generates the ranges that correspond to the outcomes, 
-#     ## within the set of all outcomes, indexed by a given selection 
-#     var s :u16 = 0
-#     let idxs0to4 = @[0, 1, 2, 3, 4]
-#     let combos = powerset(idxs0to4)
-#     result = newSeq[(u16,u16)](32) 
-#     # the sequence below reorders the output of powerset such that the result index is also a bitfield for dice selection 
-#     for i in [0,1,2,3,7,4,8,11,17,5,9,12,20,14,18,23,27,6,10,13,19,15,21,24,28,16,22,25,29,26,30,31] :
-#         let count = u16( n_take_r(6, combos[i].len, 
-#             order_matters=false, with_replacement=true) )
-#         result[i] = (s, s+count,)
-#         s+=count
+# ## these are filled with build_ev_cache()
+var EV_CACHE   {.noInit.} :ref array[1_073_741_824, f32] # 2^30 indexes hold all game state EVs
+var CHOICE_CACHE {.noInit.} : ref array[1_073_741_824, Choice] # 2^30indexes hold all corresponding Choices
 
-proc cache_roll_outcomes_data() = 
+const SELECTION_SET_OF_ALL_DICE_ONLY = [0b11111.Selection] #  selections are bitfields where '1' means roll and '0' means don't roll 
+var SET_OF_ALL_SELECTIONS = toSeq[Selection](0b00000..0b11111)
+
+proc cache_roll_outcomes() = 
     ## preps the caches of roll outcomes data for every possible 5-die selection (where '0' represents an unselected die) 
     var i = 0
     let idx_combos: seq[seq[int]] = powerset @[0,1,2,3,4] 
@@ -338,9 +355,10 @@ proc cache_roll_outcomes_data() =
 
 
 proc cache_sorted_dievals() = 
-    # for fast access later, this generates an array of dievals in sorted form, 
-    # along with each's unique "ID" between 0-252, indexed by DieVals data
-    SORTED_DIEVALS[0] = (dievals: 0.DieVals, id: 0.u8) #// first one is for the special wildcard 
+    # for fast access later, this generates an array indexed by every possible DieVals value,
+    # with each entry being the DieVals in sorted form, along with each's unique "ID" between 0-252, 
+    SORTED_DIEVALS[0] = 0.DieVals #// first one is for the special wildcard 
+    SORTED_DIEVAL_IDS[0] = 0.u8 #// first one is for the special wildcard 
     let one_to_six = @[1,2,3,4,5,6] 
     let combos = combos_with_rep(one_to_six, 5)
     for combo in combos: 
@@ -349,48 +367,18 @@ proc cache_sorted_dievals() =
         let perms = unique_permutations(sorted_list=sorted_combo)
         for i, perm in perms: 
             let dv_perm:DieVals = perm.toDieVals
-            SORTED_DIEVALS[dv_perm] = (dievals: dv_sorted, id: i.u8)
+            SORTED_DIEVALS[dv_perm.int] = dv_sorted 
+            SORTED_DIEVAL_IDS[dv_perm.int] = i.u8
+
+
+proc init_caches() =
+    ## setup helper values
+    cache_sorted_dievals() 
+    cache_roll_outcomes()
 
 
 
 #[
-
-
-V* EV_CACHE; // 2^29 indexes hold all game state EVs
-Choice* CHOICE_CACHE; // 2^29 indexes hold all corresponding Choices
-
-Ints32 SELECTION_SET_OF_ALL_DICE_ONLY; //  selections are bitfields where '1' means roll and '0' means don't roll 
-Ints32 SELECTION_SET_OF_ALL_POSSIBLE_SELECTIONS; // Ints32 type can hold 32 different selections 
-
-
-
-void init_caches(){
-
-    OUTCOME_EVS_BUFFER = malloc(NUM_THREADS * sizeof(f32*));
-    for (int i = 0; i < NUM_THREADS; i++) { OUTCOME_EVS_BUFFER[i] = malloc(1683 * sizeof(f32)); }
-
-    NEWVALS_BUFFER = malloc(NUM_THREADS * sizeof(u16*));
-    for (int i = 0; i < NUM_THREADS; i++) { NEWVALS_BUFFER[i] = malloc(1683 * sizeof(DieVals)); }
-
-    EVS_TIMES_ARRANGEMENTS_BUFFER = malloc(NUM_THREADS * sizeof(f32*));
-    for (int i = 0; i < NUM_THREADS; i++) { EVS_TIMES_ARRANGEMENTS_BUFFER[i] = malloc(1683 * sizeof(f32)); }
-
-    # setup helper values
-    cache_selection_ranges(); 
-    cache_sorted_dievals(); 
-    cache_roll_outcomes_data();
-
-    # selection sets
-    SELECTION_SET_OF_ALL_DICE_ONLY = (Ints32){ 1, 0b11111 }; //  selections are bitfields where '1' means roll and '0' means don't roll 
-    SELECTION_SET_OF_ALL_POSSIBLE_SELECTIONS = (Ints32){}; // Ints32 type can hold 32 different selections 
-    for(int i=0b00000; i<=0b11111; i++) SELECTION_SET_OF_ALL_POSSIBLE_SELECTIONS.arr[i]=i; 
-    SELECTION_SET_OF_ALL_POSSIBLE_SELECTIONS.count=32;
-
-    //gignormous cache for holding EVs of all game states
-    EV_CACHE = malloc(pow(2,29) * sizeof(EV)); // 2^29 slots hold all unique game states 
-    CHOICE_CACHE = malloc(pow(2,29) * sizeof(Choice)); // 2^29 slots hold all unique game states 
- 
-}
 
 
 void init_bar_for(GameState game) {
@@ -450,11 +438,9 @@ func print_state_choice(_ state :GameState , _ choice_ev: ChoiceEV ) {
 
 when isMainModule:
 
-    var dvs = init_dievals(1,2,3,4,5)
-    echo "dvs: ", repr(dvs)
+    #test stuff
 
-    var dvintseq: seq[int] = dvs.toIntSeq
-    echo "dvintseq: ", dvintseq
-
-    var dvintarr: array[5, int] = dvs.toIntArray
-    echo "dvintarr: ", dvintarr 
+    var dv = [5,2,3,4,1].toDieVals
+    cache_sorted_dievals()
+    var dv_sorted = SORTED_DIEVALS[dv.int]
+    echo $dv_sorted
