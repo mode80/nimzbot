@@ -20,7 +20,6 @@ type Selection = u8
 type Slot = u8
 type Choice = u8
 type DieVal = u8 
-type DieValsID = u8 
 
 type SlotType = enum 
     ACES=1, TWOS, THREES, FOURS, FIVES, SIXES,    
@@ -33,6 +32,8 @@ type SlotType = enum
 
 macro `:=` (name, value :untyped) :untyped = newVarStmt(name, value)
 
+iterator items (i :SomeOrdinal) :SomeOrdinal = ## enable use of "for i in 5:" syntax 
+    for j in 0..<i: yield j
 
 proc set_to[T] (left :var T, right :Option[T] ) = 
     if right!=none(T): left=right.get
@@ -46,11 +47,6 @@ func unless [T] (left :T, cond:bool) :Option[T] =
     if not cond: some(left) else: none(T) 
 
 
-func factorial(n:int) :int= 
-    if (n<=1): return 1
-    return n * factorial(n-1)
-
-
 func n_take_r (n :int, r :int, order_matters :bool = false, with_replacement :bool = false) :int= 
     ## count of arrangements that can be formed from r selections, chosen from n items, 
     ## where order DOES or DOESNT matter, and WITH or WITHOUT replacement, as specified.
@@ -58,12 +54,12 @@ func n_take_r (n :int, r :int, order_matters :bool = false, with_replacement :bo
         if (with_replacement): 
             return n^r
         else: # no replacement
-            return factorial(n) div factorial(n-r) # this = factorial(n) when r=n
+            return fac(n) div fac(n-r) # this = factorial(n) when r=n
     else : # we're counting "combinations" where order doesn't matter; there are less of these 
         if (with_replacement) :
-            return factorial(n+r-1) div (factorial(r)*factorial(n-1));
+            return fac(n+r-1) div (fac(r)*fac(n-1));
         else : # no replacement
-            return factorial(n) div (factorial(r)*factorial(n-r));
+            return fac(n) div (fac(r)*fac(n-r));
 
 
 proc combos_with_rep [T] (list :seq[T], k: int): seq[seq[T]] =
@@ -85,22 +81,22 @@ func distinct_arrangements_for [T] (dieval_seq :seq[T]) :f32 =
 
     for key, count in key_counts: 
         if key != 0: 
-            divisor *= factorial(count)
+            divisor *= fac(count)
             non_zero_dievals += count
 
-    return factorial(non_zero_dievals) / divisor 
+    return fac(non_zero_dievals) / divisor 
 
 
-func powerset [T] (set :seq[T]) :seq[seq[T]] =
+func powerset [T] (list :seq[T]) :seq[seq[T]] =
 
-    let count :int = 2^set.len # set_size of power set of a set with set_size n is (2**n -1)
+    let count :int = 2^list.len # set_size of power set of a set with set_size n is (2**n -1)
     var i, j :int
 
-    for i in 0..<count: # Run from counter 000..0 to 111..1
+    for i in count: # Run from counter 000..0 to 111..1
         var innerList = newSeqOfCap[T](count) 
         # Check each jth bit in the counter is set If set then add jth element from set 
-        for j in 0..<set.len: 
-            if (i and (1 shl j)) > 0: innerList .add set[j]
+        for j in list.len: 
+            if (i and (1 shl j)) > 0: innerList .add list[j]
         result .add innerList
     return result
 
@@ -114,49 +110,94 @@ func unique_permutations (sorted_list :seq[int]) :seq[seq[int]] =
 # DIEVALS 
 # -------------------------------------------------------------
 
+# type DieFace = enum 
+#     ONE=1, TWO, THREE, FOUR, FIVE, SIX
+
+# type DieValSet= set[DieFace]
+
+# type DieValSet= set[u8]
+
 type DieVals = u16 # 5 dievals, each from 0 to 6, can be encoded in 2 bytes total, each taking 3 bits
 
+# func init_dievals (self :array[5,int]) :DieVals = # construct a DieVals from an array of 5 DieVal types
+#     for i in 0..4:
+#         result = result or u16(self[i] shl (i * 3))
 
-func init_dievals (self :array[5,int]) :DieVals = # construct a DieVals from an array of 5 DieVal types
+# func init_dievals (self :openArray[int]) :DieVals = # construct a DieVals from an array of 5 DieVal types
+#     assert self.len == 5
+#     for i in 0..4:
+#         result = result or u16(self[i] shl (i * 3))
+
+
+func init_dievals(d1 :int, d2 :int, d3 :int, d4 :int, d5 :int) :DieVals = # construct a DieVals from 5 int args 
+    result = u16(d1) or u16(d2 shl 3) or u16(d3 shl 6) or u16(d4 shl 9) or u16(d5 shl 12)
+
+func toDieVals (it:array[5,int]) :DieVals = # convert an array of 5 ints to a DieVals
     for i in 0..4:
-        result = result or u16(self[i] shl (i * 3))
+        result = result or u16(it[i] shl (i * 3))
 
-
-func init_dievals (self :openArray[int]) :DieVals = # construct a DieVals from an array of 5 DieVal types
-    assert self.len == 5
+func toDieVals (it :seq[int]) :DieVals = # convert a seq of 5 ints to a DieVals
+    assert it.len == 5
     for i in 0..4:
-        result = result or u16(self[i] shl (i * 3))
+        result = result or u16(it[i] shl (i * 3))
 
+func toDieVals (it :openArray[int]) :DieVals = # convert an array or seq of 5 ints to a DieVals
+    assert it.len == 5
+    for i in 0..4:
+        result = result or u16(it[i] shl (i * 3))
 
-func `[]`(self :DieVals, i :int): DieVal = # extract a DieVal from a DieVals // TODO: try Nim bitset?
+using self: DieVals # declare self to be of DieVals for below methods
+
+func toIntSeq(self) :seq[int] = # convert a DieVals to a seq of 5 ints
+    for i in 0..4:
+        let val = (self shr (i * 3)) and 7
+        result.add val.int
+
+func toIntArray(self) :array[5,int] = # convert a DieVals to a array of 5 ints
+    for i in 0..4:
+        let val = (self shr (i * 3)) and 7
+        result[i] = val.int
+
+func `[]`(self; i :int): DieVal = # extract a DieVal from a DieVals // TODO: try Nim bitset?
     assert i >= 0 and i < 5
     result = DieVal (self shr (i * 3)) and 0b111
 
 
-iterator items (self :DieVals) :DieVal =
+iterator items(self) :DieVal =
     for i in 0..4: 
         let val = (self shr (i * 3)) and 7
         yield val.DieVal
 
 
-iterator pairs (self :DieVals) :(int,DieVal) =
+iterator pairs(self) :(int,DieVal) =
     for i in 0..4: 
         let val = (self shr (i * 3)) and 7
         yield (i, val.DieVal)
+
+type DieValsID = tuple[  #TODO test splitting for separate SORTED_DIEVALS and SORTED_DIEVAL_IDS (better cache line usage)
+    dievals : DieVals, 
+    id :u8  # the id is a kind of offset that later helps us fast-index into the EV_CACHE 
+            # it's also an 8-bit handle to the sorted DieVals version, for more compact storage in a 32bit GameState ID
+]
 
 
 # -------------------------------------------------------------
 # SCORING FNs
 # -------------------------------------------------------------
 
-func score_upperbox (slot :Slot, sorted_dievals :DieVals) :u8 = 
+using 
+    sorted_dievals: DieVals # declare self to be of DieVals for below methods
+    slot: Slot
+
+
+func score_upperbox (slot, sorted_dievals) :u8 = 
     var sum :u8 
     for d in sorted_dievals:
         if d==slot: sum+=slot 
     return sum 
 
 
-func score_n_of_a_kind(n :int, sorted_dievals :DieVals) :u8 = 
+func score_n_of_a_kind(n :int; sorted_dievals) :u8 = 
     var inarow=1; var maxinarow=1; var lastval=100.u8; var tot=0.u8; 
     for x in sorted_dievals:
         if x==lastval and x!=0.DieVal: inarow+=1 else: inarow=1 
@@ -166,7 +207,7 @@ func score_n_of_a_kind(n :int, sorted_dievals :DieVals) :u8 =
     result .set_to tot .as_long_as maxinarow >= n    # TODO test performance of this sugar
 
 
-func straight_len(sorted_dievals :DieVals) :u8 = 
+func straight_len(sorted_dievals) :u8 = 
     var inarow:u8 = 1 
     var lastval= uint8.high # stub
     for x in sorted_dievals:
@@ -178,20 +219,20 @@ func straight_len(sorted_dievals :DieVals) :u8 =
         lastval = x
 
 
-func score_aces    (sorted_dievals :DieVals) :u8 = score_upperbox(1,sorted_dievals)     
-func score_twos    (sorted_dievals :DieVals) :u8 = score_upperbox(2,sorted_dievals) 
-func score_threes(sorted_dievals :DieVals) :u8 = score_upperbox(3,sorted_dievals) 
-func score_fours (sorted_dievals :DieVals) :u8 = score_upperbox(4,sorted_dievals) 
-func score_fives    (sorted_dievals :DieVals) :u8 = score_upperbox(5,sorted_dievals) 
-func score_sixes (sorted_dievals :DieVals) :u8 = score_upperbox(0,sorted_dievals) 
+func score_aces  (sorted_dievals) :u8 = score_upperbox(1,sorted_dievals)     
+func score_twos  (sorted_dievals) :u8 = score_upperbox(2,sorted_dievals) 
+func score_threes(sorted_dievals) :u8 = score_upperbox(3,sorted_dievals) 
+func score_fours (sorted_dievals) :u8 = score_upperbox(4,sorted_dievals) 
+func score_fives (sorted_dievals) :u8 = score_upperbox(5,sorted_dievals) 
+func score_sixes (sorted_dievals) :u8 = score_upperbox(0,sorted_dievals) 
         
-func score_three_of_a_kind(sorted_dievals :DieVals) :u8 = score_n_of_a_kind(3,sorted_dievals)
-func score_four_of_a_kind(sorted_dievals :DieVals)    :u8 = score_n_of_a_kind(4,sorted_dievals)
-func score_sm_str8(sorted_dievals :DieVals)                 :u8 = (if straight_len(sorted_dievals) >= 4: 30 else: 0)
-func score_lg_str8(sorted_dievals :DieVals)                 :u8 = (if straight_len(sorted_dievals) == 5: 40 else: 0)
+func score_three_of_a_kind (sorted_dievals) :u8 = score_n_of_a_kind(3,sorted_dievals)
+func score_four_of_a_kind  (sorted_dievals) :u8 = score_n_of_a_kind(4,sorted_dievals)
+func score_sm_str8         (sorted_dievals) :u8 = (if straight_len(sorted_dievals) >= 4: 30 else: 0)
+func score_lg_str8         (sorted_dievals) :u8 = (if straight_len(sorted_dievals) == 5: 40 else: 0)
 
 
-func score_fullhouse(sorted_dievals :DieVals) :u8 = 
+func score_fullhouse(sorted_dievals) :u8 = 
 # The official rule is that a Full House is "three of one number and two of another
  
     var valcounts1, valcounts2, j :int 
@@ -206,18 +247,18 @@ func score_fullhouse(sorted_dievals :DieVals) :u8 =
     if (valcounts1==3 and valcounts2==2) or (valcounts2==3 and valcounts1==2): return 25 
     return 0 
 
-func score_chance(sorted_dievals :DieVals) :u8 = 
+func score_chance(sorted_dievals) :u8 = 
     
     let dv = sorted_dievals
     return dv[0]+dv[1]+dv[2]+dv[3]+dv[4] 
 
         
-func score_yahtzee(sorted_dievals :DieVals) :u8 =
+func score_yahtzee(sorted_dievals) :u8 =
     let dv = sorted_dievals
     if dv[0]==dv[4] and dv[0]!=0: result = 50
 
 
-func score_slot_with_dice(slot :Slot, sorted_dievals :DieVals) :u8 =
+func score_slot_with_dice(slot, sorted_dievals) :u8 =
     # reports the score for a set of dice in a given slot w/o regard for exogenous gamestate (bonuses, yahtzee wildcards etc) 
     case SlotType slot
     of ACES: return score_aces sorted_dievals 
@@ -253,6 +294,10 @@ const SELECTION_RANGES = [(0, 1), (1, 7), (7, 13), (13, 34), (90, 96), (179, 200
     (340, 466), (928, 949), (1067, 1123), (1249, 1305), (466, 592), (949, 1005), (1123, 1249), 
     (1305, 1431), (1431, 1683)] # = cache_selection_ranges()   # TODO confirm these are correct
 
+# var SELECTION_RANGES = static(cache_selection_ranges())
+
+# const SELECTION_RANGES = cache_selection_ranges()
+
 # func cache_selection_ranges() :seq[(u16,u16)] = #TODO confirm the order of the powerset corresponds to RANGE_IDX_FOR_SELECTION
 #     ## this generates the ranges that correspond to the outcomes, 
 #     ## within the set of all outcomes, indexed by a given selection 
@@ -286,30 +331,25 @@ proc cache_roll_outcomes_data() =
                 dievals_arr[idx] = die_combo[j]
                 mask_arr[idx]=0
             var arrangement_count = distinct_arrangements_for(die_combo)
-            var dievals = init_dievals(dievals_arr)
-            var mask = init_dievals(mask_arr)
-            OUTCOME_DIEVALS[i] = dievals
-            OUTCOME_MASKS[i] = mask
+            OUTCOME_DIEVALS[i] = dievals_arr.toDieVals
+            OUTCOME_MASKS[i] = mask_arr.toDieVals
             OUTCOME_ARRANGEMENTS[i] = arrangement_count
             inc i
 
 
-# proc cache_sorted_dievals() = 
-#     # for fast access later, this generates an array of dievals in sorted form, 
-#     # along with each's unique "ID" between 0-252, indexed by DieVals data
-#     SORTED_DIEVALS[0] = 0 #// first one is for the special wildcard 
-#     let one_to_six = @[1,2,3,4,5,6] 
-#     let combos = combos_with_rep(one_to_six, 5)
-#     for combo in combos: 
-#         var dv_sorted = init_dievals(combo)
-#         Ints8* ints8_perms = get_unique_perms(combos[i], &perm_count)
-#         for (int j=0; j<perm_count; j++) {
-#             Ints8 perm = ints8_perms[j];
-#             DieVals dv_perm = dievals_from_ints8(perm);
-#             SORTED_DIEVALS[dv_perm] = (DieValsID){.dievals=dv_sorted, .id=i};
-#         }
-#     }
-# }
+proc cache_sorted_dievals() = 
+    # for fast access later, this generates an array of dievals in sorted form, 
+    # along with each's unique "ID" between 0-252, indexed by DieVals data
+    SORTED_DIEVALS[0] = (dievals: 0.DieVals, id: 0.u8) #// first one is for the special wildcard 
+    let one_to_six = @[1,2,3,4,5,6] 
+    let combos = combos_with_rep(one_to_six, 5)
+    for combo in combos: 
+        var sorted_combo = combo.sorted()
+        var dv_sorted:DieVals = sorted_combo.toDieVals
+        let perms = unique_permutations(sorted_list=sorted_combo)
+        for i, perm in perms: 
+            let dv_perm:DieVals = perm.toDieVals
+            SORTED_DIEVALS[dv_perm] = (dievals: dv_sorted, id: i.u8)
 
 
 
@@ -410,22 +450,11 @@ func print_state_choice(_ state :GameState , _ choice_ev: ChoiceEV ) {
 
 when isMainModule:
 
-  # test some stuff
-   # Create a sequence with multiple elements
-   let inputSeq = @[1, 1, 3]
-   
-   # Call the `unique_permutations` function on the sequence
-   let resultSeq = unique_permutations(inputSeq)
-   
-   # Create a sequence containing all the expected permutations
-   let expectedSeq = @[@[1, 1, 3], @[1, 3, 1], @[3, 1, 1]]
-   
-   # Loop through the result and compare each element to the expected permutations
-   for result in resultSeq:
-       if not expectedSeq.contains(result):
-           echo "Test failed: unexpected permutation"
-           quit 1
-   
-   # If all elements are in the expected permutations, the test passes
-   echo "Test passed"
-    
+    var dvs = init_dievals(1,2,3,4,5)
+    echo "dvs: ", repr(dvs)
+
+    var dvintseq: seq[int] = dvs.toIntSeq
+    echo "dvintseq: ", dvintseq
+
+    var dvintarr: array[5, int] = dvs.toIntArray
+    echo "dvintarr: ", dvintarr 
