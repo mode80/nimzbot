@@ -1,17 +1,10 @@
-# -------------------------------------------------------------
-# TOP
-# -------------------------------------------------------------
 
-# include prelude
-import macros
-import options
-import tables
-import sequtils
-import math
-import algorithm
-
-# {.experimental: "codeReordering".}
 {. hint[XDeclaredButNotUsed]:off .}
+# {.experimental: "codeReordering".}
+import macros, options, tables, sequtils, math, algorithm
+# -------------------------------------------------------------
+# TYPES 
+
 
 type u8 = uint8
 type u16 = uint16
@@ -184,8 +177,24 @@ func `$`(self) :string = # convert a DieVals to a string
 # SLOTS 
 #-------------------------------------------------------------
 
+## 13 slots are encoded such that the 1<<slot_number bit is set if the slot is filled. The 0th bit is always 0.
+type Slots = distinct u16
+
+using self: Slots
+
+func init_slots(args: varargs[int]): Slots = # construct a Slots from a varargs of Slot args) 
+    var int_slots: int = 0
+    for arg in args:
+        int_slots = int_slots or (1 shl arg)
+    return int_slots.Slots
+
+func `$`(self) :string = # convert a Slots to a string
+    for i in 1..13:
+        if (self.int and (1 shl i)) > 0: 
+            result.add $i
+            result.add '_' 
+
 #[
-Slots slots_empty() { return 0; } 
 
 Slots slots_init_va(int arg_count, ... ) {
     u16 result =0;
@@ -535,7 +544,8 @@ func print_state_choice(_ state :GameState , _ choice_ev: ChoiceEV ) {
 #-------------------------------------------------------------
 # BUILD CACHE 
 #-------------------------------------------------------------
-        
+
+
 #-------------------------------------------------------------
 # MAIN
 #-------------------------------------------------------------
@@ -544,8 +554,5 @@ when isMainModule:
 
     #test stuff
 
-    var dv = [5,2,3,4,1].toDieVals
-    cache_sorted_dievals()
-    var dv_sorted = SORTED_DIEVALS[dv.int]
-    echo $dv_sorted
-    echo $(2351.u16)
+    var s:Slots = init_slots([2,2,3,6,5,8,9,10,11,12,13])
+    echo s
