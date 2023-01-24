@@ -194,16 +194,19 @@ func `$`(self) :string = ## convert a Slots to a string
         result.add $slot.int
         result.add '_' 
 
+
 func used_upper_slots(unused_slots :Slots) :Slots =
     const upper_slots = {ACES, TWOS, THREES, FOURS, FIVES, SIXES}
     var used_slots = unused_slots.inverse 
     result = used_slots * upper_slots # intersection 
+
 
 func best_upper_total(slots :Slots) :int=
     for slot in slots: 
         if slot>SIXES: break 
         if slots.contains(slot): result += slot.int
     result *= 5
+
 
 func useful_upper_totals(unused_slots :Slots) :seq[int] = 
     ## a non-exact but fast estimate of relevant_upper_totals
@@ -222,9 +225,7 @@ func useful_upper_totals(unused_slots :Slots) :seq[int] =
 
     # filter out the lowish totals that aren't relevant because they can't reach the goal with the upper slots remaining 
     # this filters out a lot of dead state space but means the lookup function must later map extraneous deficits to a default 
-
     var best_unused_slot_total = best_upper_total(unused_slots)
-
     for total in totals:
         if (total!=BLANK and total+best_unused_slot_total>=63) or total==0: 
             result.add total
@@ -281,7 +282,6 @@ func score_lg_str8         (sorted_dievals) :u8 = (if straight_len(sorted_dieval
 
 func score_fullhouse(sorted_dievals) :u8 = 
 # The official rule is that a Full House is "three of one number and two of another
-
     var valcounts1, valcounts2, j :int 
 
     for i, val in sorted_dievals:
@@ -291,11 +291,11 @@ func score_fullhouse(sorted_dievals) :u8 =
         if j==2: valcounts2+=1
         if j==3: return 0
 
-    if (valcounts1==3 and valcounts2==2) or (valcounts2==3 and valcounts1==2): return 25 
+    if (valcounts1,valcounts2) in [(2,3), (3,2)]: return 25
     return 0 
 
+
 func score_chance(sorted_dievals) :u8 = 
-    
     let dv = sorted_dievals
     return dv[0]+dv[1]+dv[2]+dv[3]+dv[4] 
 
@@ -484,4 +484,6 @@ when isMainModule:
     results = useful_upper_totals(used_uppers)
     expected_output = @[0,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63]
     assert results == expected_output
-    echo "tests passed"
+
+    echo score_fullhouse([1,1,3,3,3].toDieVals)
+    echo score_fullhouse([1,3,3,3,3].toDieVals)
