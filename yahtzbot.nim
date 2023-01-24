@@ -177,76 +177,19 @@ func `$`(self) :string = # convert a DieVals to a string
 # SLOTS 
 #-------------------------------------------------------------
 
-## 13 slots are encoded such that the 1<<slot_number bit is set if the slot is filled. The 0th bit is always 0.
-type Slots = distinct u16
+# use Nim's built-in bitset type for slots
+type Slots = set[SlotType] 
 
 using self: Slots
 
-func init_slots(args: varargs[int]): Slots = # construct a Slots from a varargs of Slot args) 
-    var int_slots: int = 0
-    for arg in args:
-        int_slots = int_slots or (1 shl arg)
-    return int_slots.Slots
+func init_slots(args: varargs[int]): Slots = ## construct a Slots from a varargs of Slot args) 
+    for arg in args: result.incl arg.SlotType
 
-func `$`(self) :string = # convert a Slots to a string
-    for i in 1..13:
-        if (self.int and (1 shl i)) > 0: 
-            result.add $i
-            result.add '_' 
-
+func `$`(self) :string = ## convert a Slots to a string
+    for slot in self:
+        result.add $slot.int
+        result.add '_' 
 #[
-
-Slots slots_init_va(int arg_count, ... ) {
-    u16 result =0;
-    u16 mask = 0; 
-
-    va_list args; //varargs args ceremony
-    va_start (args, arg_count); // " " "
-
-    for (int i = 0; i < arg_count; i++){ 
-        mask = 0x0001 << (u16)(va_arg(args, int));  // va_arg returns and advances the next arg 
-        result |= mask; // force on
-    }
-    return result;
-}
-
-Slots slots_from_ints16(Ints16 slots) {
-    u16 result = 0;
-    u16 mask = 0; 
-    for (int i = 0; i < slots.count; i++){ 
-        mask = 0x0001 << (u16)(slots.arr[i]);  
-        result |= mask; // force on
-    }
-    return result;
-}
-
-Slot slots_get(Slots self, int index) {
-    u16 bits = self;
-    u16 bit_index=0;
-    int i = index+1;
-    int j=1; //the slots data does not use the rightmost (0th) bit 
-    while (j <= i){ 
-        bit_index = countTrailingZeros(bits);
-        bits = (bits & (~( 1 << bit_index) ));  //unset bit
-        j+=1;
-    } 
-    return (Slot)bit_index;
-}
-
-bool slots_has(Slots self, Slot slot){ 
-    return 0x0000 < (self & (0x0001<<(u16)(slot)));
-} 
-
-int slots_count(Slots self){ 
-    int len = 0;
-    for (int i=1; i<=13; i++){ if (slots_has(self, i)) {len++;} }
-    return len; 
-} 
-
-Slots slots_removing(Slots self, Slot slot_to_remove) { 
-    u16 mask = ~( 1 << slot_to_remove );
-    return (self & mask); //# force off
-} 
 
 int* ZERO_THRU_63 = (int[64]){0,1,2,3,4,5,6,7,8,9, 10,11,12,13,14,15,16,17,18,19,
         20,21,22,23,24,25,26,27,28,29, 30,31,32,33,34,35,36,37,38,39,
@@ -554,5 +497,13 @@ when isMainModule:
 
     #test stuff
 
-    var s:Slots = init_slots([2,2,3,6,5,8,9,10,11,12,13])
-    echo s
+    var slots:Slots = init_slots([2,2,3,6,5,8,9,10,11,12,13])
+    echo $slots
+    var slot = toSeq(slots.items)[1]
+    echo slot
+    echo slots.contains(FULL_HOUSE)
+    slots.excl(FULL_HOUSE)
+    echo slots.len
+    echo slots.contains(FULL_HOUSE)
+    echo slots
+
