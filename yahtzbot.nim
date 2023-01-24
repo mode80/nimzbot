@@ -1,7 +1,6 @@
-
 {. hint[XDeclaredButNotUsed]:off .}
 # {.experimental: "codeReordering".}
-import macros, options, tables, sequtils, math, algorithm, bitops
+import macros, options, tables, sequtils, math, algorithm
 # -------------------------------------------------------------
 # TYPES 
 
@@ -14,11 +13,10 @@ type f32 = float32
 type f64 = float64 # lazy Rust-like abbreviations
 
 type Selection = u8
-type Slot = u8
 type Choice = u8
 type DieVal = u8 
 
-type SlotType = enum 
+type Slot= enum 
     ACES=1, TWOS, THREES, FOURS, FIVES, SIXES,    
     THREE_OF_A_KIND, FOUR_OF_A_KIND, FULL_HOUSE, 
     SM_STRAIGHT, LG_STRAIGHT, YAHTZEE, CHANCE
@@ -183,13 +181,12 @@ func `$`(self) :string = # convert a DieVals to a string
 #-------------------------------------------------------------
 
 # use Nim's built-in bitset type for slots
-type Slots = set[SlotType] 
+type Slots = set[Slot] 
 
 using self: Slots
 
-
 func init_slots(args: varargs[int]): Slots = ## construct a Slots from a varargs of Slot args) 
-    for arg in args: result.incl arg.SlotType
+    for arg in args: result.incl arg.Slot
 
 
 func `$`(self) :string = ## convert a Slots to a string
@@ -197,56 +194,41 @@ func `$`(self) :string = ## convert a Slots to a string
         result.add $slot.int
         result.add '_' 
 
-
 func used_upper_slots(unused_slots :Slots) :Slots =
     const upper_slots = {ACES, TWOS, THREES, FOURS, FIVES, SIXES}
     var used_slots = unused_slots.inverse 
     result = used_slots * upper_slots # intersection 
 
-
-func best_upper_total(slots :Slots) :u8 =
+func best_upper_total(slots :Slots) :int=
     for slot in slots: 
         if slot>SIXES: break 
-        if slots.contains(slot): result += slot.u8
+        if slots.contains(slot): result += slot.int
     result *= 5
 
-#[
+func useful_upper_totals(unused_slots :Slots) :seq[int] = 
+    ## a non-exact but fast estimate of relevant_upper_totals
+    ## ie the unique and relevant "upper bonus total" that could have occurred from the previously used upper slots
+    var totals = toSeq(0..63) 
+    var used_uppers = used_upper_slots(unused_slots)
+    var all_even = true
+    const BLANK = int.low
 
- 
+    for slot in used_uppers:
+        if slot.int mod 2 == 1: (all_even = false; break)
 
-// a non-exact but fast estimate of relevant_upper_totals
-// ie the unique and relevant "upper bonus total" that could have occurred from the previously used upper slots
-Ints64 useful_upper_totals(Slots unused_slots) { 
-    int totals[64]; 
-    memcpy(totals, ZERO_THRU_63, 64*sizeof(int)); // init to 0 thru 63
-    Slots used_uppers = used_upper_slots(unused_slots);
-    bool all_even = true;
-    int count = slots_count(used_uppers);
-    for (int i=0; i<count; i++){ 
-        Slot slot = slots_get(used_uppers, i);
-        if (slot % 2 == 1) {all_even = false; break;} 
-    }
-    if (all_even) { // stub out odd totals if the used uppers are all even 
-        for (int i=0; i<64; i++){ 
-            if (totals[i]%2==1) totals[i] = SENTINEL;
-        } 
-    } 
+    if all_even:  # stub out odd totals if the used uppers are all even 
+        for total in totals.mitems: 
+            if total mod 2 == 1: total = BLANK 
 
-    // filter out the lowish totals that aren't relevant because they can't reach the goal with the upper slots remaining 
-    // this filters out a lot of dead state space but means the lookup function must later map extraneous deficits to a default 
-    int best_unused_slot_total = best_upper_total(unused_slots);
-    // totals = (x for x in totals if x + best_unused_slot_total >=63 || x==0)
-    // totals = from x in totals where (x + best_unused_slot_total >=63 || x==0) select x
-    Ints64 result = {};
-    for (int i=0; i<64; i++){ 
-        if (totals[i]!=SENTINEL && totals[i] + best_unused_slot_total >= 63 || totals[i]==0) {
-            result.arr[result.count]=totals[i];
-            result.count++;
-        }
-    }
-    return result;  
-}
-]#
+    # filter out the lowish totals that aren't relevant because they can't reach the goal with the upper slots remaining 
+    # this filters out a lot of dead state space but means the lookup function must later map extraneous deficits to a default 
+
+    var best_unused_slot_total = best_upper_total(unused_slots)
+
+    for total in totals:
+        if (total!=BLANK and total+best_unused_slot_total>=63) or total==0: 
+            result.add total
+
 
 # -------------------------------------------------------------
 # SCORING FNs
@@ -258,10 +240,8 @@ using
 
 
 func score_upperbox (slot, sorted_dievals) :u8 = 
-    var sum :u8 
     for d in sorted_dievals:
-        if d==slot: sum+=slot 
-    return sum 
+        if d.u8 == slot.u8: result += slot.u8
 
 
 func score_n_of_a_kind(n :int; sorted_dievals) :u8 = 
@@ -286,12 +266,12 @@ func straight_len(sorted_dievals) :u8 =
         lastval = x
 
 
-func score_aces  (sorted_dievals) :u8 = score_upperbox(1,sorted_dievals)     
-func score_twos  (sorted_dievals) :u8 = score_upperbox(2,sorted_dievals) 
-func score_threes(sorted_dievals) :u8 = score_upperbox(3,sorted_dievals) 
-func score_fours (sorted_dievals) :u8 = score_upperbox(4,sorted_dievals) 
-func score_fives (sorted_dievals) :u8 = score_upperbox(5,sorted_dievals) 
-func score_sixes (sorted_dievals) :u8 = score_upperbox(0,sorted_dievals) 
+func score_aces  (sorted_dievals) :u8 = score_upperbox(1.Slot,sorted_dievals)     
+func score_twos  (sorted_dievals) :u8 = score_upperbox(2.Slot,sorted_dievals) 
+func score_threes(sorted_dievals) :u8 = score_upperbox(3.Slot,sorted_dievals) 
+func score_fours (sorted_dievals) :u8 = score_upperbox(4.Slot,sorted_dievals) 
+func score_fives (sorted_dievals) :u8 = score_upperbox(5.Slot,sorted_dievals) 
+func score_sixes (sorted_dievals) :u8 = score_upperbox(6.Slot,sorted_dievals) 
         
 func score_three_of_a_kind (sorted_dievals) :u8 = score_n_of_a_kind(3,sorted_dievals)
 func score_four_of_a_kind  (sorted_dievals) :u8 = score_n_of_a_kind(4,sorted_dievals)
@@ -327,7 +307,7 @@ func score_yahtzee(sorted_dievals) :u8 =
 
 func score_slot_with_dice(slot, sorted_dievals) :u8 =
     # reports the score for a set of dice in a given slot w/o regard for exogenous gamestate (bonuses, yahtzee wildcards etc) 
-    case SlotType slot
+    case Slot slot
     of ACES: return score_aces sorted_dievals 
     of TWOS: return score_twos sorted_dievals 
     of THREES: return score_threes sorted_dievals 
@@ -482,7 +462,7 @@ when isMainModule:
 
     #test stuff
 
-    var slots:Slots = init_slots([2,2,3,6,5,8,9,10,11,12,13])
+    var slots:Slots = init_slots(2,2,3,6,5,8,9,10,11,12,13)
     echo $slots
     var slot = toSeq(slots.items)[1]
     echo slot
@@ -494,3 +474,14 @@ when isMainModule:
     echo slots
     echo slots.best_upper_total
 
+    # Test useful_upper_totals
+    var used_uppers = init_slots(1,2,3,4,5,6)
+    var results = useful_upper_totals(used_uppers)
+    var expected_output = @[0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30,32,34,36,38,40,42,44,46,48,50,52,54,56,58,60,62]
+    assert results == expected_output
+
+    used_uppers = init_slots(3,4,5)
+    results = useful_upper_totals(used_uppers)
+    expected_output = @[0,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63]
+    assert results == expected_output
+    echo "tests passed"
