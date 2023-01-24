@@ -203,34 +203,16 @@ func used_upper_slots(unused_slots :Slots) :Slots =
     var used_slots = unused_slots.inverse 
     result = used_slots * upper_slots # intersection 
 
+
+func best_upper_total(slots :Slots) :u8 =
+    for slot in slots: 
+        if slot>SIXES: break 
+        if slots.contains(slot): result += slot.u8
+    result *= 5
+
 #[
 
-void slots_powerset(Slots self, Slots* out, int* out_len) { 
-    int len = slots_count(self);
-    int powerset_len = 1 << len;
-    int powerset_index = 0;
-    for (int i=0; i<powerset_len; i++){ 
-        int j = i;
-        int k = 0;
-        Slots subset = slots_empty();
-        while (j > 0) { 
-            if (j & 1) { subset |= (0x0001 << slots_get(self, k)); }
-            j >>= 1;
-            k += 1;
-        } 
-        out[powerset_index] = subset;
-        powerset_index += 1;
-    } 
-    *out_len = powerset_len;
-}
-
-u8 best_upper_total(Slots slots) {  
-    u8 sum=0;
-    for (int i=1; i<=6; i++) { 
-        if (slots_has(slots, i)) { sum+=i; }
-    } 
-    return sum*5;
-} 
+ 
 
 // a non-exact but fast estimate of relevant_upper_totals
 // ie the unique and relevant "upper bonus total" that could have occurred from the previously used upper slots
@@ -508,6 +490,7 @@ when isMainModule:
     slots.excl(FULL_HOUSE)
     echo slots.len
     echo slots.contains(FULL_HOUSE)
+    var unused = used_upper_slots(unused_slots=slots)
     echo slots
-    echo used_upper_slots(unused_slots=slots)
+    echo slots.best_upper_total
 
