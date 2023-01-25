@@ -119,7 +119,7 @@ void tick(){
     ticks++;
     if (ticks % tick_interval == 0) {
         printf("Progress: %d%%\r", (int)(ticks * 100 / tick_limit));
-        // printf("█");
+        # printf("█");
         fflush(stdout);
     }
 }
@@ -241,7 +241,6 @@ func `$`(self) :string = ## convert a Slots to a string
     for slot in self:
         result.add $slot.int
         result.add '_' 
-
 
 func used_upper_slots(unused_slots :Slots) :Slots =
     const upper_slots = {ACES, TWOS, THREES, FOURS, FIVES, SIXES}
@@ -487,42 +486,32 @@ func counts(self: GameState): u64 =
         for total in totals:
             inc result # this just counts the cost of one pass through the bar.tick call in the dice-choose section of build_cache() loop
 
-#[
 
-u8 min_u8(u8 a, u8 b){return a<b?a:b;}
+func score_first_slot_in_context(self: GameState): u8 = 
 
-u8 score_first_slot_in_context(GameState self) { 
+    assert self.open_slots!={}
 
-    assert(self.open_slots!=0);
+    # score slot itself w/o regard to game state 
+    var slot = toSeq(self.open_slots)[0] # first slot in open_slots
+    result = score_slot_with_dice(slot, self.sorted_dievals) 
 
-    // score slot itself w/o regard to game state 
-        Slot slot = slots_get(self.open_slots,0); // first slot in open_slots
-        u8 score = score_slot_with_dice(slot, self.sorted_dievals) ;
+    # add upper bonus when needed total is reached 
+    if slot<=SIXES and self.upper_total<63:
+        var new_total = min(self.upper_total+result, 63) 
+        if new_total==63 : # we just reach bonus threshold
+            result += 35   # add the 35 bonus points 
 
-    // add upper bonus when needed total is reached 
-        if (slot<=SIXES && self.upper_total<63){
-            u8 new_total = min_u8(self.upper_total+score, 63); 
-            if (new_total==63) { // we just reach bonus threshold
-                score += 35;   // add the 35 bonus points 
-            }
-        } 
+    # special handling of "joker rules" 
+    var just_rolled_yahtzee = (score_yahtzee(self.sorted_dievals)==50)
+    var joker_rules_in_play = (slot != YAHTZEE) # joker rules in effect when the yahtzee slot is not open 
+    if (just_rolled_yahtzee and joker_rules_in_play): # standard scoring applies against the yahtzee dice except ... 
+        if (slot==FULL_HOUSE) :result=25
+        if (slot==SM_STRAIGHT):result=30
+        if (slot==LG_STRAIGHT):result=40
 
-    // special handling of "joker rules" 
-        int just_rolled_yahtzee = score_yahtzee(self.sorted_dievals)==50;
-        bool joker_rules_in_play = (slot != YAHTZEE); // joker rules in effect when the yahtzee slot is not open 
-        if (just_rolled_yahtzee && joker_rules_in_play){ // standard scoring applies against the yahtzee dice except ... 
-            if (slot==FULL_HOUSE) {score=25;}
-            if (slot==SM_STRAIGHT){score=30;}
-            if (slot==LG_STRAIGHT){score=40;}
-        } 
+    # # special handling of "extra yahtzee" bonus per rules
+    if (just_rolled_yahtzee and self.yahtzee_bonus_avail): result+=100
 
-    // # special handling of "extra yahtzee" bonus per rules
-        if (just_rolled_yahtzee && self.yahtzee_bonus_avail) {score+=100;}
-
-    return score;
-} 
-
-]#
 
 #-------------------------------------------------------------
 # BUILD CACHE 
@@ -537,19 +526,14 @@ proc main() =
     #test stuff
     init_caches()
 
-    var game = init_gamestate(sorted_dievals=0.DieVals, open_slots={}, upper_total=0, rolls_remaining=0, yahtzee_bonus_avail=false)
-    echo game.id
-    echo game.counts
-
-    game = init_gamestate(
-        sorted_dievals=[0,0,0,0,0].toDieVals, 
-        open_slots=[1,2,3,4,5,6,7,8,9,10,11,12,13].toSlots,
+    var game = init_gamestate(
+        sorted_dievals=[2,2,2,3,5].toDieVals, 
+        open_slots=[7,8,9,10,11,12,13].toSlots,
         upper_total=0, 
         rolls_remaining=3, 
         yahtzee_bonus_avail=false
     )
-    echo game.id
-    echo game.counts
+    echo score_first_slot_in_context(game)
 
 
 when isMainModule: main()
