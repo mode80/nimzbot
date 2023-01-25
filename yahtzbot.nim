@@ -106,6 +106,54 @@ func inverse [T] (s :set[T]) :set[T] =
     for i in T.low..T.high: 
         if not s.contains(i): result.incl(i)
 
+#[
+
+void init_bar_for(GameState game) {
+    tick_limit = counts(game);
+    tick_interval = (tick_limit) / 100;
+    printf("Progress: %d%%\r", 0);
+    fflush(stdout);
+} 
+
+void tick(){
+    ticks++;
+    if (ticks % tick_interval == 0) {
+        printf("Progress: %d%%\r", (int)(ticks * 100 / tick_limit));
+        // printf("█");
+        fflush(stdout);
+    }
+}
+
+func print_state_choices_header() { 
+    print("choice_type,choice,dice,rolls_remaining,upper_total,yahtzee_bonus_avail,open_slots,expected_value");
+} 
+
+// should produce one line of output kinda like ...
+// D,01111,65411,2,31,Y,1_3_4_6_7_8_11_,119.23471
+// S,13,66641,0,11,Y,3_4_5_9_10_13_,113.45208
+func print_state_choice(_ state :GameState , _ choice_ev: ChoiceEV ) { 
+    let Y="Y"; let N="N"; let S="S"; let D="D"; let C=","; // TODO hoist these to constants
+    var sb:String=""; sb.reserveCapacity(60)
+    if (state.rolls_remaining==0){ // for slot choice 
+        sb += (S); sb+=(C);
+        sb += (choice_ev.choice.description); // for dice choice 
+    } else {
+        sb+=(D); sb+=(C);
+        sb+=("00000"+choice_ev.choice.description).suffix(5)
+    }
+    sb+=(C);
+    sb+=(state.sorted_dievals.description); sb+=(C);
+    sb+=(state.rolls_remaining.description); sb+=(C);
+    sb+=(state.upper_total.description); sb+=(C);
+    sb+=(state.yahtzee_bonus_avail ? Y : N); sb+=(C);
+    sb+=(state.open_slots.description); sb+=(C);
+    sb+=String(format: "%.2f", choice_ev.ev)
+    print(sb);
+} 
+
+]#
+
+
 # -------------------------------------------------------------
 # DIEVALS 
 # -------------------------------------------------------------
@@ -117,18 +165,11 @@ func init_dievals(d1 :int, d2 :int, d3 :int, d4 :int, d5 :int) :DieVals = # cons
     result = DieVals(u16(d1) or u16(d2 shl 3) or u16(d3 shl 6) or u16(d4 shl 9) or u16(d5 shl 12))
 
 
-func toDieVals (it:array[5,int]) :DieVals = # convert an array of 5 ints to a DieVals
+func toDieVals (args :varargs[int]) :DieVals = # convert a seq of 5 ints to a DieVals
+    assert args.len == 5
     var intout :int = 0
     for i in 0..4:
-        intout = intout or it[i] shl (i * 3)
-    result = intout.DieVals
-
-
-func toDieVals (it :seq[int]) :DieVals = # convert a seq of 5 ints to a DieVals
-    assert it.len == 5
-    var intout :int = 0
-    for i in 0..4:
-        intout = intout or it[i] shl (i * 3)
+        intout = intout or args[i] shl (i * 3)
     result = intout.DieVals
 
 
@@ -185,9 +226,16 @@ type Slots = set[Slot]
 
 using self: Slots
 
-func init_slots(args: varargs[int]): Slots = ## construct a Slots from a varargs of Slot args) 
-    for arg in args: result.incl arg.Slot
+func toSlots(args: varargs[Slot]): Slots = ## construct a Slots from a varargs 
+    for arg in args: result.incl arg
 
+func toSlots(args: varargs[int]): Slots = ## construct a Slots from a varargs 
+    for arg in args: 
+        assert arg in 1..13
+        result.incl arg.Slot
+
+func toSlotSeq(self) :seq[Slot] = ## convert a Slots to a seq of Slots
+    for slot in self: result.add slot
 
 func `$`(self) :string = ## convert a Slots to a string
     for slot in self:
@@ -234,16 +282,12 @@ func useful_upper_totals(unused_slots :Slots) :seq[int] =
 # -------------------------------------------------------------
 # SCORING FNs
 # -------------------------------------------------------------
-
-using 
-    sorted_dievals: DieVals # declare self to be of DieVals for below methods
-    slot: Slot
-
+using sorted_dievals: DieVals # declare self to be of DieVals for below methods
+using slot: Slot
 
 func score_upperbox (slot, sorted_dievals) :u8 = 
     for d in sorted_dievals:
         if d.u8 == slot.u8: result += slot.u8
-
 
 func score_n_of_a_kind(n :int; sorted_dievals) :u8 = 
     var inarow=1; var maxinarow=1; var lastval=100.u8; var tot=0.u8; 
@@ -335,20 +379,20 @@ const SELECTION_RANGES = [(0, 1), (1, 7), (7, 13), (13, 34), (90, 96), (179, 200
     (1305, 1431), (1431, 1683)] # = cache_selection_ranges()   # TODO confirm these are correct
 
 ## these are filled with cache_roll_outcomes()
-var OUTCOME_DIEVALS :array[1683,DieVals] 
-var OUTCOME_MASKS :array[1683,DieVals] 
-var OUTCOME_ARRANGEMENTS :array[1683,f32] 
+var OUTCOME_DIEVALS: ref array[1683,DieVals] 
+var OUTCOME_MASKS: ref array[1683,DieVals] 
+var OUTCOME_ARRANGEMENTS: ref array[1683,f32] 
 
 # these are filled with cache_sorted_dievals()
-var SORTED_DIEVALS :array[32767, DieVals]
-var SORTED_DIEVAL_IDS :array[32767, u8]
+var SORTED_DIEVALS: ref array[32767, DieVals]
+var SORTED_DIEVAL_IDS: ref array[32767, u8]
 
 # ## these are filled with build_ev_cache()
 var EV_CACHE   {.noInit.} :ref array[1_073_741_824, f32] # 2^30 indexes hold all game state EVs
 var CHOICE_CACHE {.noInit.} : ref array[1_073_741_824, Choice] # 2^30indexes hold all corresponding Choices
 
 const SELECTION_SET_OF_ALL_DICE_ONLY = [0b11111.Selection] #  selections are bitfields where '1' means roll and '0' means don't roll 
-var SET_OF_ALL_SELECTIONS = toSeq[Selection](0b00000..0b11111)
+const SET_OF_ALL_SELECTIONS = toSeq[Selection](0b00000..0b11111)
 
 proc cache_roll_outcomes() = 
     ## preps the caches of roll outcomes data for every possible 5-die selection (where '0' represents an unselected die) 
@@ -356,6 +400,9 @@ proc cache_roll_outcomes() =
     let idx_combos: seq[seq[int]] = powerset @[0,1,2,3,4] 
     assert idx_combos.len==32 
     let one_thru_six = @[1,2,3,4,5,6] 
+    new(OUTCOME_DIEVALS)
+    new(OUTCOME_MASKS)
+    new(OUTCOME_ARRANGEMENTS)
 
     for idx_combo in idx_combos:
         var dievals_arr = [0,0,0,0,0] 
@@ -378,6 +425,8 @@ proc cache_roll_outcomes() =
 proc cache_sorted_dievals() = 
     # for fast access later, this generates an array indexed by every possible DieVals value,
     # with each entry being the DieVals in sorted form, along with each's unique "ID" between 0-252, 
+    new(SORTED_DIEVALS)
+    new(SORTED_DIEVAL_IDS)
     SORTED_DIEVALS[0] = 0.DieVals #// first one is for the special wildcard 
     SORTED_DIEVAL_IDS[0] = 0.u8 #// first one is for the special wildcard 
     let one_to_six = @[1,2,3,4,5,6] 
@@ -396,58 +445,84 @@ proc init_caches() =
     ## setup helper values
     cache_sorted_dievals() 
     cache_roll_outcomes()
+    new(EV_CACHE)
+    new(CHOICE_CACHE)
+
+# ------------------------------------------------------------
+# GAMESTATE 
+# ------------------------------------------------------------
+
+   
+#we can store all of below in a sparse array using 2^(8+13+6+2+1) entries = 1_073_741_824 entries = 5.2GB when storing 32bit EVs + 8bit Choice 
+type GameState = tuple 
+    id: u32                     # the 30-bit encoding which also serves as an index into EV_CACHE and CHOICE_CACHE for this game state 
+    sorted_dievals: DieVals     # 15, 3 for each die, OR 8 bits once convereted to an ordinal DieVal_ID (252 possibilities)
+    yahtzee_bonus_avail: bool   # 1bit         
+    open_slots: Slots           # 13 bits        
+    upper_total: u8             # 6 bits       
+    rolls_remaining: u8         # 2 bits 
+
+proc init_gamestate(sorted_dievals: DieVals, open_slots: Slots, upper_total: u8, rolls_remaining: u8, yahtzee_bonus_avail: bool): GameState =
+    # var self = (GameState){};
+    var id:u32
+    var dievals_id = SORTED_DIEVAL_IDS[sorted_dievals.int] # self.id will use 30 bits total...
+    id= (dievals_id.u32) or # this is the 8-bit encoding of self.sorted_dievals
+        (yahtzee_bonus_avail.u32 shl 8.u32)  or  # this is the 1-bit encoding of self.yahtzee_bonus_avail 
+        (cast[u32](open_slots)   shl 8.u32)  or # slots doesn't use its rightmost bit so we only shift 8. it's fully 14 bits itself 
+        (upper_total.u32         shl 22.u32) or# upper total uses 6 bits 
+        (rolls_remaining.u32     shl 28.u32) # 0-3 rolls is stored in 2 bits.  8+1+14-1+6+2 = 30 bits total 
+    result = (id, sorted_dievals, yahtzee_bonus_avail, open_slots, upper_total, rolls_remaining,)
+
+
+func counts(self: GameState): u64 = 
+    ## calculate relevant counts for gamestate: required lookups and saves
+    # Slots powerset[8192]; int powerset_len = 0;
+    # slots_powerset(self.open_slots, powerset, &powerset_len);
+    var slotsets = powerset(self.open_slots.toSlotSeq) 
+    # for(int i=1; i<powerset_len; i++) {
+    for slotset in slotsets:
+        var joker_rules = not slotset.contains YAHTZEE # yahtzees aren't wild whenever yahtzee slot is still available 
+        var totals = useful_upper_totals(slotset.toSlots)
+        # for(int j=0; j<totals.count; j++) {
+        for total in totals:
+            inc result # this just counts the cost of one pass through the bar.tick call in the dice-choose section of build_cache() loop
 
 #[
 
+u8 min_u8(u8 a, u8 b){return a<b?a:b;}
 
-void init_bar_for(GameState game) {
-    tick_limit = counts(game);
-    tick_interval = (tick_limit) / 100;
-    printf("Progress: %d%%\r", 0);
-    fflush(stdout);
-} 
+u8 score_first_slot_in_context(GameState self) { 
 
-void tick(){
-    ticks++;
-    if (ticks % tick_interval == 0) {
-        printf("Progress: %d%%\r", (int)(ticks * 100 / tick_limit));
-        // printf("█");
-        fflush(stdout);
-    }
-}
+    assert(self.open_slots!=0);
 
-func print_state_choices_header() { 
-    print("choice_type,choice,dice,rolls_remaining,upper_total,yahtzee_bonus_avail,open_slots,expected_value");
-} 
+    // score slot itself w/o regard to game state 
+        Slot slot = slots_get(self.open_slots,0); // first slot in open_slots
+        u8 score = score_slot_with_dice(slot, self.sorted_dievals) ;
 
-// should produce one line of output kinda like ...
-// D,01111,65411,2,31,Y,1_3_4_6_7_8_11_,119.23471
-// S,13,66641,0,11,Y,3_4_5_9_10_13_,113.45208
-func print_state_choice(_ state :GameState , _ choice_ev: ChoiceEV ) { 
-    let Y="Y"; let N="N"; let S="S"; let D="D"; let C=","; // TODO hoist these to constants
-    var sb:String=""; sb.reserveCapacity(60)
-    if (state.rolls_remaining==0){ // for slot choice 
-        sb += (S); sb+=(C);
-        sb += (choice_ev.choice.description); // for dice choice 
-    } else {
-        sb+=(D); sb+=(C);
-        sb+=("00000"+choice_ev.choice.description).suffix(5)
-    }
-    sb+=(C);
-    sb+=(state.sorted_dievals.description); sb+=(C);
-    sb+=(state.rolls_remaining.description); sb+=(C);
-    sb+=(state.upper_total.description); sb+=(C);
-    sb+=(state.yahtzee_bonus_avail ? Y : N); sb+=(C);
-    sb+=(state.open_slots.description); sb+=(C);
-    sb+=String(format: "%.2f", choice_ev.ev)
-    print(sb);
+    // add upper bonus when needed total is reached 
+        if (slot<=SIXES && self.upper_total<63){
+            u8 new_total = min_u8(self.upper_total+score, 63); 
+            if (new_total==63) { // we just reach bonus threshold
+                score += 35;   // add the 35 bonus points 
+            }
+        } 
+
+    // special handling of "joker rules" 
+        int just_rolled_yahtzee = score_yahtzee(self.sorted_dievals)==50;
+        bool joker_rules_in_play = (slot != YAHTZEE); // joker rules in effect when the yahtzee slot is not open 
+        if (just_rolled_yahtzee && joker_rules_in_play){ // standard scoring applies against the yahtzee dice except ... 
+            if (slot==FULL_HOUSE) {score=25;}
+            if (slot==SM_STRAIGHT){score=30;}
+            if (slot==LG_STRAIGHT){score=40;}
+        } 
+
+    // # special handling of "extra yahtzee" bonus per rules
+        if (just_rolled_yahtzee && self.yahtzee_bonus_avail) {score+=100;}
+
+    return score;
 } 
 
 ]#
-
-# -------------------------------------------------------------
-# GAMESTATE 
-# -------------------------------------------------------------
 
 #-------------------------------------------------------------
 # BUILD CACHE 
@@ -458,32 +533,23 @@ func print_state_choice(_ state :GameState , _ choice_ev: ChoiceEV ) {
 # MAIN
 #-------------------------------------------------------------
 
-when isMainModule:
-
+proc main() =
     #test stuff
+    init_caches()
 
-    var slots:Slots = init_slots(2,2,3,6,5,8,9,10,11,12,13)
-    echo $slots
-    var slot = toSeq(slots.items)[1]
-    echo slot
-    echo slots.contains(FULL_HOUSE)
-    slots.excl(FULL_HOUSE)
-    echo slots.len
-    echo slots.contains(FULL_HOUSE)
-    var unused = used_upper_slots(unused_slots=slots)
-    echo slots
-    echo slots.best_upper_total
+    var game = init_gamestate(sorted_dievals=0.DieVals, open_slots={}, upper_total=0, rolls_remaining=0, yahtzee_bonus_avail=false)
+    echo game.id
+    echo game.counts
 
-    # Test useful_upper_totals
-    var used_uppers = init_slots(1,2,3,4,5,6)
-    var results = useful_upper_totals(used_uppers)
-    var expected_output = @[0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30,32,34,36,38,40,42,44,46,48,50,52,54,56,58,60,62]
-    assert results == expected_output
+    game = init_gamestate(
+        sorted_dievals=[0,0,0,0,0].toDieVals, 
+        open_slots=[1,2,3,4,5,6,7,8,9,10,11,12,13].toSlots,
+        upper_total=0, 
+        rolls_remaining=3, 
+        yahtzee_bonus_avail=false
+    )
+    echo game.id
+    echo game.counts
 
-    used_uppers = init_slots(3,4,5)
-    results = useful_upper_totals(used_uppers)
-    expected_output = @[0,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63]
-    assert results == expected_output
 
-    echo score_fullhouse([1,1,3,3,3].toDieVals)
-    echo score_fullhouse([1,3,3,3,3].toDieVals)
+when isMainModule: main()
