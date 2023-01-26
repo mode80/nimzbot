@@ -379,7 +379,7 @@ const NUM_THREADS=1
 
 ## These are index spans into the OUTCOME_ arrays below which correspond to each dieval selection.
 ## Each of the 32 indecis from 0b00000 to 0b11111 represents the dieval selection as a bitfield 
-const OUTCOME_IDX_FOR_SELECTION = [(0..<1),(1..<7),(7..<13),(13..<34),(90..<96),(179..<200),(592..<613),
+const OUTCOMES_IDX_FOR_SELECTION = [(0..<1),(1..<7),(7..<13),(13..<34),(90..<96),(179..<200),(592..<613),
     (34..<90),(96..<102),(200..<221),(613..<634),(102..<158),(221..<242),(634..<690),(263..<319),
     (746..<872),(1005..<1011),(158..<179),(319..<340),(690..<746),(242..<263),(872..<928),(1011..<1067),
     (340..<466),(928..<949),(1067..<1123),(1249..<1305),(466..<592),(949..<1005),(1123..<1249),
@@ -390,11 +390,11 @@ var OUTCOME_DIEVALS: ref array[1683,DieVals]
 var OUTCOME_MASKS: ref array[1683,DieVals] 
 var OUTCOME_ARRANGEMENTS: ref array[1683,f32] 
 
-# these are filled with cache_sorted_dievals()
+# these are filled by cache_sorted_dievals()
 var SORTED_DIEVALS: ref array[32767, DieVals]
 var SORTED_DIEVAL_IDS: ref array[32767, u8]
 
-# ## these are filled with build_ev_cache()
+# ## these are filled by build_ev_cache()
 var EV_CACHE   {.noInit.} :ref array[1_073_741_824, f32] # 2^30 indexes hold all game state EVs
 var CHOICE_CACHE {.noInit.} : ref array[1_073_741_824, Choice] # 2^30indexes hold all corresponding Choices
 
@@ -536,6 +536,57 @@ var SET_OF_ALL_SELECTIONS = toSeq(0b00000.Selection..0b11111.Selection)
 const false_true = @[false,true]
 const just_false = @[false]
 
+proc avg_ev(start_dievals: DieVals, selection:Selection, slots: Slots, upper_total: u8, 
+            next_roll: u8, yahtzee_bonus_available: bool, threadid: int): f32 = 
+    ## calculates the average EV for a dice selection from a starting dice combo 
+    ## within the context of the other relevant gamestate variables
+
+    var total_ev_for_selection: f32 = 0.0 
+    var outcomes_arrangements_count: f32 = 0.0
+    var range = OUTCOMES_IDX_FOR_SELECTION[selection]
+    var OUTCOME_EVS_BUFFER: array[1683,f32] 
+    var NEWVALS_BUFFER: array[1683,DieVals]
+
+    var floor_state = init_gamestate(
+        0.DieVals,
+        slots, 
+        upper_total, 
+        next_roll, # we'll average all the 'next roll' possibilities (which we'd calclated on the last pass) to get ev for 'this roll' 
+        yahtzee_bonus_available 
+    )
+    var floor_state_idx = floor_state.id.int  
+    # from this floor gamestate we can blend in a dievals_id to quickly calc the index we need to access the ev for the complete state 
+
+    # blit all each roll outcome for the given dice selection onto the unrolled start_dievals and stash results in the NEWVALS_BUFFER 
+    #pragma GCC ivdepi # one tries. no help with auto SIMD in GCC AFAICT
+    #pragma clang loop vectorize(enable) # clang does does appear to auto-SIMD this loop
+    for i in range :
+        NEWVALS_BUFFER[i] = (start_dievals.u16 and OUTCOME_MASKS[i].u16).DieVals #make some holes in the dievals for newly rolled die vals 
+        NEWVALS_BUFFER[i] = (NEWVALS_BUFFER[i].u16 or OUTCOME_DIEVALS[i].u16).DieVals # fill in the holes with the newly rolled die vals
+        # TODO try OUTCOME_* arrays in on the stack instead of global for speed increase?? 
+
+    for i in range: # this loop is a bunch of lookups so doesn't benefit from SIMD
+        #= gather sorted =#
+            var newvals_idx = NEWVALS_BUFFER[i].int
+            var sorted_dievals_id = SORTED_DIEVAL_IDS[newvals_idx].int
+        #= gather ev =#
+            var state_to_get_id = floor_state_idx or sorted_dievals_id
+            OUTCOME_EVS_BUFFER[i] = EV_CACHE[state_to_get_id]
+
+    #pragma GCC ivdepi 
+    #pragma clang loop vectorize(enable)
+    for i in range:  # this loop is all math so should be eligble for SIMD optimization
+        # we have EVs for each "combination" but we need the average all "permutations" 
+        # -- so we mutliply by the number of distinct arrangements for each combo 
+        var count = OUTCOME_ARRANGEMENTS[i]
+        total_ev_for_selection +=  OUTCOME_EVS_BUFFER[i] * count 
+        outcomes_arrangements_count += count
+
+    # this final step gives us the average EV for all permutations of rolled dice 
+    return total_ev_for_selection / outcomes_arrangements_count 
+
+# end avg_ev
+
 
 proc process_state(state: GameState, thread_id: int) = 
     ## this does the work of calculating and store the expected value of a single gamestate
@@ -666,7 +717,7 @@ proc build_ev_cache(apex_state: GameState) =
             var upper_totals = useful_upper_totals(single_slot_set)
             for upper_total in upper_totals:
                 # for each outcome_combo 
-                for outcome_combo in OUTCOME_DIEVALS[ OUTCOME_IDX_FOR_SELECTION[ ALL_DICE ] ]: 
+                for outcome_combo in OUTCOME_DIEVALS[ OUTCOMES_IDX_FOR_SELECTION[ ALL_DICE ] ]: 
                     var state = init_gamestate( outcome_combo, single_slot_set, upper_total.u8, 0.u8, yahtzee_bonus_avail )
                     var score = score_first_slot_in_context(state) 
                     CHOICE_CACHE[state.id] = single_slot.Choice
@@ -689,8 +740,8 @@ proc build_ev_cache(apex_state: GameState) =
             for rolls_remaining in 0..3:
 
                 var outcome_range = if rolls_remaining==3: 
-                    OUTCOME_IDX_FOR_SELECTION[0b00000] 
-                    else: OUTCOME_IDX_FOR_SELECTION[0b11111]
+                    OUTCOMES_IDX_FOR_SELECTION[0b00000] 
+                    else: OUTCOMES_IDX_FOR_SELECTION[0b11111]
                 
                 var full_count = outcome_range.len 
                 var chunk_count = full_count .ceilDiv NUM_THREADS
@@ -702,87 +753,6 @@ proc build_ev_cache(apex_state: GameState) =
                     var chunk_range = chunk_idx..min(chunk_idx+chunk_count-1, outcome_range.b)
                     process_chunk(slots, upper_total.u8, rolls_remaining.u8, joker_rules_in_play, chunk_range, thread_id)
                     inc thread_id
-
-#[
-
-// calculates the average EV for a dice selection from a starting dice combo 
-// within the context of the other relevant gamestate variables
-f32 avg_ev(DieVals start_dievals, Selection selection, Slots slots, u8 upper_total, 
-            u8 next_roll, bool yahtzee_bonus_available, usize threadid) { 
-
-    f32 total_ev_for_selection = 0.0 ;
-    f32 outcomes_arrangements_count = 0.0;
-    Range range = SELECTION_RANGES[selection];
-
-    GameState floor_state = gamestate_init(
-        (DieVals)0,
-        slots, 
-        upper_total, 
-        next_roll, // we'll average all the 'next roll' possibilities (which we'd calclated on the last pass) to get ev for 'this roll' 
-        yahtzee_bonus_available 
-    );
-    usize floor_state_id = floor_state.id ; 
-    // from this floor gamestate we can blend in a dievals_id to quickly calc the index we need to access the ev for the complete state 
-
-    // blit all each roll outcome for the given dice selection onto the unrolled start_dievals and stash results in the NEWVALS_BUFFER 
-    #pragma GCC ivdepi // one tries. no help with auto SIMD in GCC AFAICT
-    #pragma clang loop vectorize(enable) // clang does does appear to auto-SIMD this loop
-    for (usize i=range.start; i<range.stop; i++) { 
-        NEWVALS_BUFFER[threadid][i] = (start_dievals & OUTCOME_MASKS[i]); //make some holes in the dievals for newly rolled die vals 
-        NEWVALS_BUFFER[threadid][i] |= OUTCOME_DIEVALS[i]; // fill in the holes with the newly rolled die vals
-    } 
-
-    for (usize i=range.start; i<range.stop; i++) { // this loop is a bunch of lookups so doesn't benefit from SIMD
-        //= gather sorted =#
-            usize newvals_datum = NEWVALS_BUFFER[threadid][i];
-            usize sorted_dievals_id  = SORTED_DIEVALS_ID[newvals_datum];
-        //= gather ev =#
-            usize state_to_get_id = floor_state_id | sorted_dievals_id;
-            OUTCOME_EVS_BUFFER[threadid][i] = EV_CACHE[state_to_get_id];
-    } 
-
-    #pragma GCC ivdepi 
-    #pragma clang loop vectorize(enable)
-    for (usize i=range.start; i<range.stop; i++) { // this loop is all math so should be eligble for SIMD optimization
-        // we have EVs for each "combination" but we need the average all "permutations" 
-        // -- so we mutliply by the number of distinct arrangements for each combo 
-        f32 count = OUTCOME_ARRANGEMENTS[i];
-        total_ev_for_selection +=  OUTCOME_EVS_BUFFER[threadid][i] * count ;
-        outcomes_arrangements_count += count;
-    } 
-
-    // this final step gives us the average EV for all permutations of rolled dice 
-    return total_ev_for_selection / outcomes_arrangements_count; 
-
-} // avg_ev
-
-void init_caches(){
-
-    OUTCOME_EVS_BUFFER = malloc(NUM_THREADS * sizeof(f32*));
-    for (int i = 0; i < NUM_THREADS; i++) { OUTCOME_EVS_BUFFER[i] = malloc(1683 * sizeof(f32)); }
-
-    NEWVALS_BUFFER = malloc(NUM_THREADS * sizeof(u16*));
-    for (int i = 0; i < NUM_THREADS; i++) { NEWVALS_BUFFER[i] = malloc(1683 * sizeof(DieVals)); }
-
-    // setup helper values
-    cache_selection_ranges(); 
-    cache_sorted_dievals(); 
-    cache_roll_outcomes_data();
-
-    // selection sets
-    SELECTION_SET_OF_ALL_DICE_ONLY = (Ints32){ 1, 0b11111 }; //  selections are bitfields where '1' means roll and '0' means don't roll 
-    SET_OF_ALL_SELECTIONS = (Ints32){}; // Ints32 type can hold 32 different selections 
-    for(int i=0b00000; i<=0b11111; i++) SET_OF_ALL_SELECTIONS.arr[i]=i; 
-    SET_OF_ALL_SELECTIONS.count=32;
-
-    //gignormous cache for holding EVs of all game states
-    //    // EV_CACHE = (ChoiceEV(*)[1073741824])malloc(pow(2,30) * sizeof(ChoiceEV)); // 2^30 slots hold all unique game states 
-    CHOICE_CACHE = malloc(pow(2,30) * sizeof(Choice)); // 2^30 slots hold all unique game states 
-    EV_CACHE = malloc(pow(2,30) * sizeof(f32)); // 2^30 slots hold all unique game states 
- 
-}
-
-]#
 
 #-------------------------------------------------------------
 # MAIN

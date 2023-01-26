@@ -2,6 +2,7 @@
 .idea
 .nimcache
 .DS_Store
+.swp
 lldbnim.py
 yahtzbot.dSYM
 yahtzbot
