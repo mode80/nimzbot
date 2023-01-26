@@ -1,44 +1,46 @@
-{. hint[XDeclaredButNotUsed]:off .}
-# {.experimental: "codeReordering".}
 import macros, options, tables, sequtils, math, algorithm
+{. hint[XDeclaredButNotUsed]:off .}
+{.experimental: "views".}
+# {.experimental: "codeReordering".}
+
 # -------------------------------------------------------------
 # TYPES 
+# -------------------------------------------------------------
+type 
+    u8 = uint8
+    u16 = uint16
+    u32 = uint32
+    u64 = uint64
+    f32 = float32
+    f64 = float64 # lazy Rust-like abbreviations
 
+    Selection = range[0b00000..0b11111]  # types can be constrained to range. cool
+    Choice = u8
+    DieVal = u8 
 
-type u8 = uint8
-type u16 = uint16
-type u32 = uint32
-type u64 = uint64
-type f32 = float32
-type f64 = float64 # lazy Rust-like abbreviations
-
-type Selection = u8
-type Choice = u8
-type DieVal = u8 
-
-type Slot= enum 
-    ACES=1, TWOS, THREES, FOURS, FIVES, SIXES,    
-    THREE_OF_A_KIND, FOUR_OF_A_KIND, FULL_HOUSE, 
-    SM_STRAIGHT, LG_STRAIGHT, YAHTZEE, CHANCE
+    Slot= enum 
+        ACES=1, TWOS, THREES, FOURS, FIVES, SIXES,    
+        THREE_OF_A_KIND, FOUR_OF_A_KIND, FULL_HOUSE, 
+        SM_STRAIGHT, LG_STRAIGHT, YAHTZEE, CHANCE
 
 # -------------------------------------------------------------
 # UTILS 
 # -------------------------------------------------------------
 
-macro `:=` (name, value :untyped) :untyped = newVarStmt(name, value)
+macro `:=` (name, value :untyped) :untyped = newVarStmt(name, value) ## walrus for a:=1 assignment. mostly unused POC
 
-iterator items (i :SomeOrdinal) :SomeOrdinal = ## enable use of "for i in 5:" syntax 
+iterator items (i :SomeOrdinal) :SomeOrdinal = ## one-liner enables use of "for i in 5:" syntax. pretty cool 
     for j in 0..<i: yield j
 
-proc set_to[T] (left :var T, right :Option[T] ) = 
+proc set_to[T] (left :var T, right :Option[T] ) = ## enables "result .set_to tot .as_long_as maxinarow >= n" syntax 
     if right!=none(T): left=right.get
 
 
-func as_long_as [T] (left :T, cond:bool) :Option[T] = 
+func as_long_as [T] (left :T, cond:bool) :Option[T] = ## enables "result .set_to tot .as_long_as maxinarow >= n" syntax 
     if cond: some(left) else: none(T) 
 
 
-func unless [T] (left :T, cond:bool) :Option[T] = 
+func unless [T] (left :T, cond:bool) :Option[T] = ## enables "result .set_to tot .unless maxinarow < n" syntax 
     if not cond: some(left) else: none(T) 
 
 
@@ -241,6 +243,10 @@ func `$`(self) :string = ## convert a Slots to a string
     for slot in self:
         result.add $slot.int
         result.add '_' 
+    
+func removing(self; slot :Slot) :Slots = ## return a new Slots with the given slot removed
+    result = self
+    result.excl slot
 
 func used_upper_slots(unused_slots :Slots) :Slots =
     const upper_slots = {ACES, TWOS, THREES, FOURS, FIVES, SIXES}
@@ -369,13 +375,15 @@ func score_slot_with_dice(slot, sorted_dievals) :u8 =
 # INITIALIZERS etc
 # -------------------------------------------------------------
 
+const NUM_THREADS=1
+
 ## These are index spans into the OUTCOME_ arrays below which correspond to each dieval selection.
 ## Each of the 32 indecis from 0b00000 to 0b11111 represents the dieval selection as a bitfield 
-const SELECTION_RANGES = [(0, 1), (1, 7), (7, 13), (13, 34), (90, 96), (179, 200), (592, 613), 
-    (34, 90), (96, 102), (200, 221), (613, 634), (102, 158), (221, 242), (634, 690), (263, 319), 
-    (746, 872), (1005, 1011), (158, 179), (319, 340), (690, 746), (242, 263), (872, 928), (1011, 1067), 
-    (340, 466), (928, 949), (1067, 1123), (1249, 1305), (466, 592), (949, 1005), (1123, 1249), 
-    (1305, 1431), (1431, 1683)] # = cache_selection_ranges()   # TODO confirm these are correct
+const OUTCOME_IDX_FOR_SELECTION = [(0..<1),(1..<7),(7..<13),(13..<34),(90..<96),(179..<200),(592..<613),
+    (34..<90),(96..<102),(200..<221),(613..<634),(102..<158),(221..<242),(634..<690),(263..<319),
+    (746..<872),(1005..<1011),(158..<179),(319..<340),(690..<746),(242..<263),(872..<928),(1011..<1067),
+    (340..<466),(928..<949),(1067..<1123),(1249..<1305),(466..<592),(949..<1005),(1123..<1249),
+    (1305..<1431),(1431..<1683)] # = cache_selection_ranges()   # TODO confirm these are correct
 
 ## these are filled with cache_roll_outcomes()
 var OUTCOME_DIEVALS: ref array[1683,DieVals] 
@@ -389,9 +397,6 @@ var SORTED_DIEVAL_IDS: ref array[32767, u8]
 # ## these are filled with build_ev_cache()
 var EV_CACHE   {.noInit.} :ref array[1_073_741_824, f32] # 2^30 indexes hold all game state EVs
 var CHOICE_CACHE {.noInit.} : ref array[1_073_741_824, Choice] # 2^30indexes hold all corresponding Choices
-
-const SELECTION_SET_OF_ALL_DICE_ONLY = [0b11111.Selection] #  selections are bitfields where '1' means roll and '0' means don't roll 
-const SET_OF_ALL_SELECTIONS = toSeq[Selection](0b00000..0b11111)
 
 proc cache_roll_outcomes() = 
     ## preps the caches of roll outcomes data for every possible 5-die selection (where '0' represents an unselected die) 
@@ -462,7 +467,6 @@ type GameState = tuple
     rolls_remaining: u8         # 2 bits 
 
 proc init_gamestate(sorted_dievals: DieVals, open_slots: Slots, upper_total: u8, rolls_remaining: u8, yahtzee_bonus_avail: bool): GameState =
-    # var self = (GameState){};
     var id:u32
     var dievals_id = SORTED_DIEVAL_IDS[sorted_dievals.int] # self.id will use 30 bits total...
     id= (dievals_id.u32) or # this is the 8-bit encoding of self.sorted_dievals
@@ -470,7 +474,15 @@ proc init_gamestate(sorted_dievals: DieVals, open_slots: Slots, upper_total: u8,
         (cast[u32](open_slots)   shl 8.u32)  or # slots doesn't use its rightmost bit so we only shift 8. it's fully 14 bits itself 
         (upper_total.u32         shl 22.u32) or# upper total uses 6 bits 
         (rolls_remaining.u32     shl 28.u32) # 0-3 rolls is stored in 2 bits.  8+1+14-1+6+2 = 30 bits total 
-    result = (id, sorted_dievals, yahtzee_bonus_avail, open_slots, upper_total, rolls_remaining,)
+    result = ( id, sorted_dievals, yahtzee_bonus_avail, open_slots, upper_total, rolls_remaining ,)
+
+# proc get_id(self: GameState): u32 = 
+#     var dievals_id = SORTED_DIEVAL_IDS[self.sorted_dievals.int] # self.id will use 30 bits total...
+#     result = (dievals_id.u32) or # this is the 8-bit encoding of self.sorted_dievals
+#         (self.yahtzee_bonus_avail.u32 shl 8.u32)  or  # this is the 1-bit encoding of self.yahtzee_bonus_avail 
+#         (cast[u32](self.open_slots)   shl 8.u32)  or # slots doesn't use its rightmost bit so we only shift 8. it's fully 14 bits itself 
+#         (self.upper_total.u32         shl 22.u32) or# upper total uses 6 bits 
+#         (self.rolls_remaining.u32     shl 28.u32) # 0-3 rolls is stored in 2 bits.  8+1+14-1+6+2 = 30 bits total 
 
 
 func counts(self: GameState): u64 = 
@@ -517,6 +529,260 @@ func score_first_slot_in_context(self: GameState): u8 =
 # BUILD CACHE 
 #-------------------------------------------------------------
 
+var ALL_DICE = 0b11111.Selection #selections are bitfields where '1' means roll and '0' mean don't
+var SELECTION_SET_OF_ALL_DICE_ONLY = @[ALL_DICE] 
+var SET_OF_ALL_SELECTIONS = toSeq(0b00000.Selection..0b11111.Selection)
+
+const false_true = @[false,true]
+const just_false = @[false]
+
+
+proc process_state(state: GameState, thread_id: int) = 
+    ## this does the work of calculating and store the expected value of a single gamestate
+
+    var best_choice: Choice = 0
+    var best_ev: f32 = 0.0
+
+    if state.rolls_remaining==0 : 
+
+    #= HANDLE SLOT SELECTION  #=
+
+        for slot in state.open_slots :
+
+            # joker rules say extra yahtzees must be played in their matching upper slot if it's available
+            var first_dieval = state.sorted_dievals[0]
+            var joker_rules_matter = state.yahtzee_bonus_avail and # TODO check this departure from C code
+                score_yahtzee(state.sorted_dievals) > 0 and
+                first_dieval.Slot in state.open_slots
+            var head_slot = if joker_rules_matter: first_dieval.Slot else: slot
+
+            var yahtzee_bonus_avail_now = state.yahtzee_bonus_avail
+            var upper_total_now :u8 = state.upper_total
+            var dievals_or_placeholder = state.sorted_dievals
+            var head_plus_tail_ev: f32 = 0.0
+            var rolls_remaining_now :u8 = 0
+
+            # find the collective ev for the all the slots with this iteration's slot being first 
+            # do this by summing the ev for the first (head) slot with the ev value that we look up for the remaining (tail) slots
+            var passes = if state.open_slots.len==1: 1 else: 2 # to do this, we need two passes unless there's only 1 slot left 
+            for pass in 1..passes:
+
+                var slots_piece = if pass==1: {head_slot} else: state.open_slots.removing head_slot # work on 1)the head only, or 2) the set without the head
+                var relevant_upper_total = if (upper_total_now + best_upper_total(slots_piece).u8 >= 63): upper_total_now else: 0 # only relevant totals are cached
+                var state_to_get: GameState = init_gamestate(
+                    dievals_or_placeholder,
+                    slots_piece, 
+                    relevant_upper_total,
+                    rolls_remaining_now, 
+                    yahtzee_bonus_avail_now,
+                )
+                var choice = CHOICE_CACHE[state_to_get.id]
+                var ev = EV_CACHE[state_to_get.id]
+                if pass==1 and state.open_slots.len > 1 : # prep 2nd pass on relevant 1st pass only..  
+                    # going into tail slots next, we may need to adjust the state based on the head choice
+                    if choice.Slot <= SIXES:  # adjust upper total for the next pass 
+                        var added = ev.u8 mod 100 # removes any yahtzee bonus from ev since that doesnt' count toward upper bonus total
+                        upper_total_now = min(63.u8, upper_total_now + added)
+                    elif choice.Slot==YAHTZEE :  # adjust yahtzee related state for the next pass
+                        if ev>0.0: yahtzee_bonus_avail_now=true
+
+                    rolls_remaining_now=3 # for upcoming tail lookup, we always want the ev for 3 rolls remaining
+                    dievals_or_placeholder = 0.DieVals # for 3 rolls remaining, use "wildcard" representative dievals since dice don't matter when rolling all of them
+                # end if pass==1
+                head_plus_tail_ev += ev;
+
+            # end for pass in 1..passes
+
+            if head_plus_tail_ev >= best_ev : 
+                best_choice = slot.Choice
+                best_ev = head_plus_tail_ev
+            
+            if (joker_rules_matter): break # if joker-rules-matter we were forced to choose one slot, so we can skip trying the rest  
+
+        #end for slot in slots                               
+
+        # output(state, best_choice, best_ev, thread_id);
+        CHOICE_CACHE[state.id] = best_choice 
+        EV_CACHE[state.id] = best_ev
+
+
+    elif state.rolls_remaining > 0:   
+        
+    #= HANDLE DICE SELECTION =#    
+
+        var next_roll = state.rolls_remaining-1
+        var selections = if state.rolls_remaining==3: SELECTION_SET_OF_ALL_DICE_ONLY else: SET_OF_ALL_SELECTIONS
+  
+        # HOT LOOP !
+        # for each possible selection of dice from this starting dice combo, 
+        # we calculate the expected value of rolling that selection, then store the best selection along with its EV 
+        for selection in selections:
+            var avg_ev_for_selection = avg_ev(
+                state.sorted_dievals, 
+                selection, 
+                state.open_slots, 
+                state.upper_total, 
+                next_roll, 
+                state.yahtzee_bonus_avail, 
+                thread_id
+            ) 
+            if (avg_ev_for_selection > best_ev):
+                best_choice = selection.Choice
+                best_ev = avg_ev_for_selection
+
+        # output(state, best_choice, best_ev, thread_id);
+        CHOICE_CACHE[state.id] = best_choice # we're writing from multiple threads but each thread will be setting a different state_to_set.id
+        EV_CACHE[state.id] = best_ev # " " " " 
+
+    # end if rolls_remaining...  
+
+# end process_state
+
+proc process_chunk(slots: Slots, upper_total :u8, rolls_remaining: u8, joker_rules_in_play: bool, chunk_range: Slice, thread_id: int) =
+
+    #for each yahtzee bonus possibility 
+    for yahtzee_bonus_avail in (if joker_rules_in_play: false_true else: just_false): 
+
+        # for each dieval combo in this chunk ...
+        # for combo in OUTCOME_DIEVALS[1..3]:
+        for i in chunk_range:
+            var combo = OUTCOME_DIEVALS[i] 
+            var state = init_gamestate( combo, slots , upper_total.u8, rolls_remaining.u8, yahtzee_bonus_avail)
+            process_state(state, thread_id)
+
+
+proc build_ev_cache(apex_state: GameState) =
+    ## for a given gamestate, calc and cache all the expected values for dependent states. (this is like.. the main thing)
+
+    var placeholder_dievals = 0.DieVals
+
+    # first handle special case of the most leafy leaf calcs -- where there's one slot left and no rolls remaining
+    for single_slot in apex_state.open_slots:
+        var single_slot_set :Slots = {single_slot} # set of a single slot 
+        var bonus_possibilities = if (single_slot != YAHTZEE): false_true else: just_false 
+        # for each yahtzee bonus availability
+        for yahtzee_bonus_avail in bonus_possibilities:
+            # for each upper_total 
+            var upper_totals = useful_upper_totals(single_slot_set)
+            for upper_total in upper_totals:
+                # for each outcome_combo 
+                for outcome_combo in OUTCOME_DIEVALS[ OUTCOME_IDX_FOR_SELECTION[ ALL_DICE ] ]: 
+                    var state = init_gamestate( outcome_combo, single_slot_set, upper_total.u8, 0.u8, yahtzee_bonus_avail )
+                    var score = score_first_slot_in_context(state) 
+                    CHOICE_CACHE[state.id] = single_slot.Choice
+                    EV_CACHE[state.id] = score.f32
+                    # output(state, single_slot.Choice, score.f32, 0);
+
+    # for each slotset of each length 
+    for slot_seq in powerset(apex_state.open_slots.toSlotSeq): 
+
+        var slots = slot_seq.toSlots
+        var joker_rules_in_play = not slots.contains YAHTZEE # joker rules might be in effect whenever the yahtzee slot is already filled 
+        var upper_totals = useful_upper_totals(slots) 
+
+        # for each upper total 
+        for upper_total in upper_totals: 
+
+            # tick(); # advance the progress bar  
+
+            # for each rolls remaining
+            for rolls_remaining in 0..3:
+
+                var outcome_range = if rolls_remaining==3: 
+                    OUTCOME_IDX_FOR_SELECTION[0b00000] 
+                    else: OUTCOME_IDX_FOR_SELECTION[0b11111]
+                
+                var full_count = outcome_range.len 
+                var chunk_count = full_count .ceilDiv NUM_THREADS
+                if full_count < NUM_THREADS: chunk_count = full_count
+                var thread_id=0
+
+                # for each dieval_combo chunk
+                for chunk_idx in countup(outcome_range.a, outcome_range.b, step=chunk_count): 
+                    var chunk_range = chunk_idx..min(chunk_idx+chunk_count-1, outcome_range.b)
+                    process_chunk(slots, upper_total.u8, rolls_remaining.u8, joker_rules_in_play, chunk_range, thread_id)
+                    inc thread_id
+
+#[
+
+// calculates the average EV for a dice selection from a starting dice combo 
+// within the context of the other relevant gamestate variables
+f32 avg_ev(DieVals start_dievals, Selection selection, Slots slots, u8 upper_total, 
+            u8 next_roll, bool yahtzee_bonus_available, usize threadid) { 
+
+    f32 total_ev_for_selection = 0.0 ;
+    f32 outcomes_arrangements_count = 0.0;
+    Range range = SELECTION_RANGES[selection];
+
+    GameState floor_state = gamestate_init(
+        (DieVals)0,
+        slots, 
+        upper_total, 
+        next_roll, // we'll average all the 'next roll' possibilities (which we'd calclated on the last pass) to get ev for 'this roll' 
+        yahtzee_bonus_available 
+    );
+    usize floor_state_id = floor_state.id ; 
+    // from this floor gamestate we can blend in a dievals_id to quickly calc the index we need to access the ev for the complete state 
+
+    // blit all each roll outcome for the given dice selection onto the unrolled start_dievals and stash results in the NEWVALS_BUFFER 
+    #pragma GCC ivdepi // one tries. no help with auto SIMD in GCC AFAICT
+    #pragma clang loop vectorize(enable) // clang does does appear to auto-SIMD this loop
+    for (usize i=range.start; i<range.stop; i++) { 
+        NEWVALS_BUFFER[threadid][i] = (start_dievals & OUTCOME_MASKS[i]); //make some holes in the dievals for newly rolled die vals 
+        NEWVALS_BUFFER[threadid][i] |= OUTCOME_DIEVALS[i]; // fill in the holes with the newly rolled die vals
+    } 
+
+    for (usize i=range.start; i<range.stop; i++) { // this loop is a bunch of lookups so doesn't benefit from SIMD
+        //= gather sorted =#
+            usize newvals_datum = NEWVALS_BUFFER[threadid][i];
+            usize sorted_dievals_id  = SORTED_DIEVALS_ID[newvals_datum];
+        //= gather ev =#
+            usize state_to_get_id = floor_state_id | sorted_dievals_id;
+            OUTCOME_EVS_BUFFER[threadid][i] = EV_CACHE[state_to_get_id];
+    } 
+
+    #pragma GCC ivdepi 
+    #pragma clang loop vectorize(enable)
+    for (usize i=range.start; i<range.stop; i++) { // this loop is all math so should be eligble for SIMD optimization
+        // we have EVs for each "combination" but we need the average all "permutations" 
+        // -- so we mutliply by the number of distinct arrangements for each combo 
+        f32 count = OUTCOME_ARRANGEMENTS[i];
+        total_ev_for_selection +=  OUTCOME_EVS_BUFFER[threadid][i] * count ;
+        outcomes_arrangements_count += count;
+    } 
+
+    // this final step gives us the average EV for all permutations of rolled dice 
+    return total_ev_for_selection / outcomes_arrangements_count; 
+
+} // avg_ev
+
+void init_caches(){
+
+    OUTCOME_EVS_BUFFER = malloc(NUM_THREADS * sizeof(f32*));
+    for (int i = 0; i < NUM_THREADS; i++) { OUTCOME_EVS_BUFFER[i] = malloc(1683 * sizeof(f32)); }
+
+    NEWVALS_BUFFER = malloc(NUM_THREADS * sizeof(u16*));
+    for (int i = 0; i < NUM_THREADS; i++) { NEWVALS_BUFFER[i] = malloc(1683 * sizeof(DieVals)); }
+
+    // setup helper values
+    cache_selection_ranges(); 
+    cache_sorted_dievals(); 
+    cache_roll_outcomes_data();
+
+    // selection sets
+    SELECTION_SET_OF_ALL_DICE_ONLY = (Ints32){ 1, 0b11111 }; //  selections are bitfields where '1' means roll and '0' means don't roll 
+    SET_OF_ALL_SELECTIONS = (Ints32){}; // Ints32 type can hold 32 different selections 
+    for(int i=0b00000; i<=0b11111; i++) SET_OF_ALL_SELECTIONS.arr[i]=i; 
+    SET_OF_ALL_SELECTIONS.count=32;
+
+    //gignormous cache for holding EVs of all game states
+    //    // EV_CACHE = (ChoiceEV(*)[1073741824])malloc(pow(2,30) * sizeof(ChoiceEV)); // 2^30 slots hold all unique game states 
+    CHOICE_CACHE = malloc(pow(2,30) * sizeof(Choice)); // 2^30 slots hold all unique game states 
+    EV_CACHE = malloc(pow(2,30) * sizeof(f32)); // 2^30 slots hold all unique game states 
+ 
+}
+
+]#
 
 #-------------------------------------------------------------
 # MAIN
@@ -526,12 +792,12 @@ proc main() =
     #test stuff
     init_caches()
 
-    var game = init_gamestate(
-        sorted_dievals=[2,2,2,3,5].toDieVals, 
-        open_slots=[7,8,9,10,11,12,13].toSlots,
-        upper_total=0, 
-        rolls_remaining=3, 
-        yahtzee_bonus_avail=false
+    var game = init_gamestate( 
+        sorted_dievals = [2,2,2,3,5].toDieVals, 
+        open_slots = [7,8,9,10,11,12,13].toSlots, 
+        upper_total = u8 0, 
+        rolls_remaining = u8 3,
+        yahtzee_bonus_avail = false 
     )
     echo score_first_slot_in_context(game)
 
