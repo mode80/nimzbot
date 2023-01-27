@@ -171,7 +171,6 @@ iterator pairs(self) :(int,DieVal) =
 
 
 func `$`(self) :string = # convert a DieVals to a string
-    result = ""
     var int_self = self.int
     for i in 0..4:
         let val = (int_self shr (i * 3)) and 7
@@ -363,42 +362,6 @@ var SORTED_DIEVAL_IDS: ref array[32767, u8]
 var EV_CACHE   {.noInit.} :ref array[1_073_741_824, f32] # 2^30 indexes hold all game state EVs
 var CHOICE_CACHE {.noInit.} : ref array[1_073_741_824, Choice] # 2^30indexes hold all corresponding Choices
 
-proc tick(ui: var UI) =
-    ui.ticks.inc
-    if ui.tick_interval==0 or ui.ticks mod ui.tick_interval == 0: 
-        print &"Progress: {$(ui.ticks * 100 div ui.tick_limit)}%\r" 
-        # print("█")
-
-
-#[
-func print_state_choices_header() { 
-    print("choice_type,choice,dice,rolls_remaining,upper_total,yahtzee_bonus_avail,open_slots,expected_value");
-} 
-
-// should produce one line of output kinda like ...
-// D,01111,65411,2,31,Y,1_3_4_6_7_8_11_,119.23471
-// S,13,66641,0,11,Y,3_4_5_9_10_13_,113.45208
-func print_state_choice(_ state :GameState , _ choice_ev: ChoiceEV ) { 
-    let Y="Y"; let N="N"; let S="S"; let D="D"; let C=","; // TODO hoist these to constants
-    var sb:String=""; sb.reserveCapacity(60)
-    if (state.rolls_remaining==0){ // for slot choice 
-        sb += (S); sb+=(C);
-        sb += (choice_ev.choice.description); // for dice choice 
-    } else {
-        sb+=(D); sb+=(C);
-        sb+=("00000"+choice_ev.choice.description).suffix(5)
-    }
-    sb+=(C);
-    sb+=(state.sorted_dievals.description); sb+=(C);
-    sb+=(state.rolls_remaining.description); sb+=(C);
-    sb+=(state.upper_total.description); sb+=(C);
-    sb+=(state.yahtzee_bonus_avail ? Y : N); sb+=(C);
-    sb+=(state.open_slots.description); sb+=(C);
-    sb+=String(format: "%.2f", choice_ev.ev)
-    print(sb);
-} 
-]#
-
 proc cache_roll_outcomes() = 
     ## preps the caches of roll outcomes data for every possible 5-die selection (where '0' represents an unselected die) 
     var i = 0
@@ -509,8 +472,8 @@ func score_first_slot_in_context(self: GameState): u8 =
 
     # special handling of "joker rules" 
     var just_rolled_yahtzee = (score_yahtzee(self.sorted_dievals)==50)
-    var joker_rules_in_play = (slot != YAHTZEE) # joker rules in effect when the yahtzee slot is not open 
-    if (just_rolled_yahtzee and joker_rules_in_play): # standard scoring applies against the yahtzee dice except ... 
+    var joker_possible = (slot != YAHTZEE) # joker rules in effect when the yahtzee slot is not open 
+    if (just_rolled_yahtzee and joker_possible): # standard scoring applies against the yahtzee dice except ... 
         if (slot==FULL_HOUSE) :result=25
         if (slot==SM_STRAIGHT):result=30
         if (slot==LG_STRAIGHT):result=40
@@ -526,7 +489,29 @@ proc init_ui(game: GameState) :UI =
     result.tick_limit = counts(game)
     result.tick_interval = (result.tick_limit) div 100
     print "Progress: 0%\r"
- 
+
+proc tick(ui: var UI) =
+    ui.ticks.inc
+    if ui.tick_interval==0 or ui.ticks mod ui.tick_interval == 0: 
+        print &"Progress: {$(ui.ticks * 100 div ui.tick_limit)}%\r" 
+
+proc print_state_choice_header() = 
+    print"rolls_remaining,sorted_dievals,upper_total,yahtzee_bonus_avail,open_slots,choice,ev"
+
+proc print_state_choice(s: GameState, c: Choice, ev: f32, threadid: int) = 
+    ## sample output:     2,33366,63,Y,1_,00011,9.61
+    const Y_N = ['Y','N'] 
+    if s.rolls_remaining==0: 
+        echo &"{s.rolls_remaining},{$s.sorted_dievals},{s.upper_total:2d},{Y_N[s.yahtzee_bonus_avail.int]:1d]},{s.open_slots},{c:05d},{ev:0.2f}"
+    else:
+        echo &"{s.rolls_remaining},{$s.sorted_dievals},{s.upper_total:2d},{Y_N[s.yahtzee_bonus_avail.int]:1d]},{s.open_slots},{c:05b},{ev:0.2f}"
+    # format strings formatter syntax: [[fill]align][sign][#][0][minimumwidth][.precision][type]
+
+proc output(s: GameState, choice: Choice, ev: f32, threadid: int) = 
+    # Uncomment below for more verbose progress output at the expense of speed 
+    print_state_choice(s, choice, ev, threadid);
+
+
 #-------------------------------------------------------------
 # BUILD CACHE 
 #-------------------------------------------------------------
@@ -654,7 +639,7 @@ proc process_state(state: GameState, thread_id: int) =
 
         #end for slot in slots                               
 
-        # output(state, best_choice, best_ev, thread_id);
+        output(state, best_choice, best_ev, thread_id);
         CHOICE_CACHE[state.id] = best_choice 
         EV_CACHE[state.id] = best_ev
 
@@ -683,7 +668,7 @@ proc process_state(state: GameState, thread_id: int) =
                 best_choice = selection.Choice
                 best_ev = avg_ev_for_selection
 
-        # output(state, best_choice, best_ev, thread_id);
+        output(state, best_choice, best_ev, thread_id);
         CHOICE_CACHE[state.id] = best_choice # we're writing from multiple threads but each thread will be setting a different state_to_set.id
         EV_CACHE[state.id] = best_ev # " " " " 
 
@@ -691,10 +676,10 @@ proc process_state(state: GameState, thread_id: int) =
 
 # end process_state
 
-proc process_chunk(slots: Slots, upper_total :u8, rolls_remaining: u8, joker_rules_in_play: bool, chunk_range: Slice, thread_id: int) =
+proc process_chunk(slots: Slots, upper_total :u8, rolls_remaining: u8, joker_possible: bool, chunk_range: Slice, thread_id: int) =
 
     #for each yahtzee bonus possibility 
-    for yahtzee_bonus_avail in (if joker_rules_in_play: false_true else: just_false): 
+    for yahtzee_bonus_avail in (if joker_possible: false_true else: just_false): 
 
         # for each dieval combo in this chunk ...
         # for combo in OUTCOME_DIEVALS[1..3]:
@@ -726,13 +711,13 @@ proc build_ev_cache(apex_state: GameState) =
                     var score = score_first_slot_in_context(state) 
                     CHOICE_CACHE[state.id] = single_slot.Choice
                     EV_CACHE[state.id] = score.f32
-                    # output(state, single_slot.Choice, score.f32, 0);
+                    output(state, single_slot.Choice, score.f32, 0);
 
     # for each slotset of each length 
     for slot_seq in powerset(apex_state.open_slots.toSlotSeq): 
 
         var slots = slot_seq.toSlots
-        var joker_rules_in_play = not slots.contains YAHTZEE # joker rules might be in effect whenever the yahtzee slot is already filled 
+        var joker_possible = not slots.contains YAHTZEE # joker rules might be in effect whenever the yahtzee slot is already filled 
         var upper_totals = useful_upper_totals(slots) 
 
         # for each upper total 
@@ -755,7 +740,7 @@ proc build_ev_cache(apex_state: GameState) =
                 # for each dieval_combo chunk
                 for chunk_idx in countup(outcome_range.a, outcome_range.b, step=chunk_count): 
                     var chunk_range = chunk_idx..min(chunk_idx+chunk_count-1, outcome_range.b)
-                    process_chunk(slots, upper_total.u8, rolls_remaining.u8, joker_rules_in_play, chunk_range, thread_id)
+                    process_chunk(slots, upper_total.u8, rolls_remaining.u8, joker_possible, chunk_range, thread_id)
                     inc thread_id
 
 #-------------------------------------------------------------
@@ -767,13 +752,19 @@ proc main() =
 
     init_caches()
 
-    var game = init_gamestate( 
-        sorted_dievals = [3,4,4,6,6].toDieVals, 
-        open_slots = [1].toSlots, 
-        upper_total = 0, 
-        rolls_remaining = 1,
-        yahtzee_bonus_avail = false 
-    )
+    # var game = init_gamestate( 
+    #     sorted_dievals = [3,4,4,6,6].toDieVals, 
+    #     open_slots = [1].toSlots, 
+    #     upper_total = 0, 
+    #     rolls_remaining = 1,
+    #     yahtzee_bonus_avail = false 
+    # )
+
+    var game = init_gamestate( [3,4,4,6,6].toDieVals, [1].toSlots, 0, 1, false )
+    # var game = init_gamestate( [3,4,4,6,6].toDieVals, [4,5,6].toSlots, 0, 1, false )
+    # var game = init_gamestate( [3,4,4,6,6].toDieVals, [7,8].toSlots, 0, 1, false )
+    # var game = init_gamestate( [3,4,4,6,6].toDieVals, [1,2,8,9,10,11,12,13].toSlots, 0, 1, false )
+    # var game = init_gamestate( [3,4,4,6,6].toDieVals, [1,2,3,4,5,6,7,8,9,10,11,12,13].toSlots, 0, 1, false )
 
     build_ev_cache(game)
     echo "\n", CHOICE_CACHE[game.id], " ", EV_CACHE[game.id]
