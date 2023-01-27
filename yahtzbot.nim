@@ -1,4 +1,4 @@
-import macros, options, tables, sequtils, math, algorithm
+import macros, options, tables, sequtils, math, algorithm, strformat
 {. hint[XDeclaredButNotUsed]:off .}
 {.experimental: "views".}
 # {.experimental: "codeReordering".}
@@ -28,6 +28,11 @@ type
 # -------------------------------------------------------------
 
 macro `:=` (name, value :untyped) :untyped = newVarStmt(name, value) ## walrus for a:=1 assignment. mostly unused POC
+
+proc print(it :string) =
+    ## print to stdout, without a newline
+    stdout.write(it)
+    stdout.flushFile()
 
 iterator items (i :SomeOrdinal) :SomeOrdinal = ## one-liner enables use of "for i in 5:" syntax. pretty cool 
     for j in 0..<i: yield j
@@ -107,53 +112,6 @@ func inverse [T] (s :set[T]) :set[T] =
     ## returns the inverse of a set, i.e. the set of all elements not in the input set
     for i in T.low..T.high: 
         if not s.contains(i): result.incl(i)
-
-#[
-
-void init_bar_for(GameState game) {
-    tick_limit = counts(game);
-    tick_interval = (tick_limit) / 100;
-    printf("Progress: %d%%\r", 0);
-    fflush(stdout);
-} 
-
-void tick(){
-    ticks++;
-    if (ticks % tick_interval == 0) {
-        printf("Progress: %d%%\r", (int)(ticks * 100 / tick_limit));
-        # printf("█");
-        fflush(stdout);
-    }
-}
-
-func print_state_choices_header() { 
-    print("choice_type,choice,dice,rolls_remaining,upper_total,yahtzee_bonus_avail,open_slots,expected_value");
-} 
-
-// should produce one line of output kinda like ...
-// D,01111,65411,2,31,Y,1_3_4_6_7_8_11_,119.23471
-// S,13,66641,0,11,Y,3_4_5_9_10_13_,113.45208
-func print_state_choice(_ state :GameState , _ choice_ev: ChoiceEV ) { 
-    let Y="Y"; let N="N"; let S="S"; let D="D"; let C=","; // TODO hoist these to constants
-    var sb:String=""; sb.reserveCapacity(60)
-    if (state.rolls_remaining==0){ // for slot choice 
-        sb += (S); sb+=(C);
-        sb += (choice_ev.choice.description); // for dice choice 
-    } else {
-        sb+=(D); sb+=(C);
-        sb+=("00000"+choice_ev.choice.description).suffix(5)
-    }
-    sb+=(C);
-    sb+=(state.sorted_dievals.description); sb+=(C);
-    sb+=(state.rolls_remaining.description); sb+=(C);
-    sb+=(state.upper_total.description); sb+=(C);
-    sb+=(state.yahtzee_bonus_avail ? Y : N); sb+=(C);
-    sb+=(state.open_slots.description); sb+=(C);
-    sb+=String(format: "%.2f", choice_ev.ev)
-    print(sb);
-} 
-
-]#
 
 
 # -------------------------------------------------------------
@@ -377,6 +335,13 @@ func score_slot_with_dice(slot, sorted_dievals) :u8 =
 
 const NUM_THREADS=1
 
+type UI = object
+    tick_limit: int 
+    tick_interval: int 
+    ticks: int 
+    progress_blocks: int
+
+
 ## These are index spans into the OUTCOME_ arrays below which correspond to each dieval selection.
 ## Each of the 32 indecis from 0b00000 to 0b11111 represents the dieval selection as a bitfield 
 const OUTCOMES_IDX_FOR_SELECTION = [(0..<1),(1..<7),(7..<13),(13..<34),(90..<96),(179..<200),(592..<613),
@@ -397,6 +362,42 @@ var SORTED_DIEVAL_IDS: ref array[32767, u8]
 # ## these are filled by build_ev_cache()
 var EV_CACHE   {.noInit.} :ref array[1_073_741_824, f32] # 2^30 indexes hold all game state EVs
 var CHOICE_CACHE {.noInit.} : ref array[1_073_741_824, Choice] # 2^30indexes hold all corresponding Choices
+
+proc tick(ui: var UI) =
+    ui.ticks.inc
+    if ui.tick_interval==0 or ui.ticks mod ui.tick_interval == 0: 
+        print &"Progress: {$(ui.ticks * 100 div ui.tick_limit)}%\r" 
+        # print("█")
+
+
+#[
+func print_state_choices_header() { 
+    print("choice_type,choice,dice,rolls_remaining,upper_total,yahtzee_bonus_avail,open_slots,expected_value");
+} 
+
+// should produce one line of output kinda like ...
+// D,01111,65411,2,31,Y,1_3_4_6_7_8_11_,119.23471
+// S,13,66641,0,11,Y,3_4_5_9_10_13_,113.45208
+func print_state_choice(_ state :GameState , _ choice_ev: ChoiceEV ) { 
+    let Y="Y"; let N="N"; let S="S"; let D="D"; let C=","; // TODO hoist these to constants
+    var sb:String=""; sb.reserveCapacity(60)
+    if (state.rolls_remaining==0){ // for slot choice 
+        sb += (S); sb+=(C);
+        sb += (choice_ev.choice.description); // for dice choice 
+    } else {
+        sb+=(D); sb+=(C);
+        sb+=("00000"+choice_ev.choice.description).suffix(5)
+    }
+    sb+=(C);
+    sb+=(state.sorted_dievals.description); sb+=(C);
+    sb+=(state.rolls_remaining.description); sb+=(C);
+    sb+=(state.upper_total.description); sb+=(C);
+    sb+=(state.yahtzee_bonus_avail ? Y : N); sb+=(C);
+    sb+=(state.open_slots.description); sb+=(C);
+    sb+=String(format: "%.2f", choice_ev.ev)
+    print(sb);
+} 
+]#
 
 proc cache_roll_outcomes() = 
     ## preps the caches of roll outcomes data for every possible 5-die selection (where '0' represents an unselected die) 
@@ -444,7 +445,6 @@ proc cache_sorted_dievals() =
             SORTED_DIEVALS[dv_perm.int] = dv_sorted 
             SORTED_DIEVAL_IDS[dv_perm.int] = i.u8
 
-
 proc init_caches() =
     ## setup helper values
     cache_sorted_dievals() 
@@ -455,10 +455,9 @@ proc init_caches() =
 # ------------------------------------------------------------
 # GAMESTATE 
 # ------------------------------------------------------------
-
-   
+  
 #we can store all of below in a sparse array using 2^(8+13+6+2+1) entries = 1_073_741_824 entries = 5.2GB when storing 32bit EVs + 8bit Choice 
-type GameState = tuple 
+type GameState = object 
     id: u32                     # the 30-bit encoding which also serves as an index into EV_CACHE and CHOICE_CACHE for this game state 
     sorted_dievals: DieVals     # 15, 3 for each die, OR 8 bits once convereted to an ordinal DieVal_ID (252 possibilities)
     yahtzee_bonus_avail: bool   # 1bit         
@@ -474,27 +473,22 @@ proc init_gamestate(sorted_dievals: DieVals, open_slots: Slots, upper_total: u8,
         (cast[u32](open_slots)   shl 8.u32)  or # slots doesn't use its rightmost bit so we only shift 8. it's fully 14 bits itself 
         (upper_total.u32         shl 22.u32) or# upper total uses 6 bits 
         (rolls_remaining.u32     shl 28.u32) # 0-3 rolls is stored in 2 bits.  8+1+14-1+6+2 = 30 bits total 
-    result = ( id, sorted_dievals, yahtzee_bonus_avail, open_slots, upper_total, rolls_remaining ,)
+    result = GameState( 
+        id:id, 
+        sorted_dievals: sorted_dievals, 
+        yahtzee_bonus_avail: yahtzee_bonus_avail, 
+        open_slots: open_slots, 
+        upper_total: upper_total, 
+        rolls_remaining: rolls_remaining 
+    )
 
-# proc get_id(self: GameState): u32 = 
-#     var dievals_id = SORTED_DIEVAL_IDS[self.sorted_dievals.int] # self.id will use 30 bits total...
-#     result = (dievals_id.u32) or # this is the 8-bit encoding of self.sorted_dievals
-#         (self.yahtzee_bonus_avail.u32 shl 8.u32)  or  # this is the 1-bit encoding of self.yahtzee_bonus_avail 
-#         (cast[u32](self.open_slots)   shl 8.u32)  or # slots doesn't use its rightmost bit so we only shift 8. it's fully 14 bits itself 
-#         (self.upper_total.u32         shl 22.u32) or# upper total uses 6 bits 
-#         (self.rolls_remaining.u32     shl 28.u32) # 0-3 rolls is stored in 2 bits.  8+1+14-1+6+2 = 30 bits total 
 
-
-func counts(self: GameState): u64 = 
+func counts(self: GameState): int = 
     ## calculate relevant counts for gamestate: required lookups and saves
-    # Slots powerset[8192]; int powerset_len = 0;
-    # slots_powerset(self.open_slots, powerset, &powerset_len);
     var slotsets = powerset(self.open_slots.toSlotSeq) 
-    # for(int i=1; i<powerset_len; i++) {
     for slotset in slotsets:
         var joker_rules = not slotset.contains YAHTZEE # yahtzees aren't wild whenever yahtzee slot is still available 
         var totals = useful_upper_totals(slotset.toSlots)
-        # for(int j=0; j<totals.count; j++) {
         for total in totals:
             inc result # this just counts the cost of one pass through the bar.tick call in the dice-choose section of build_cache() loop
 
@@ -524,7 +518,15 @@ func score_first_slot_in_context(self: GameState): u8 =
     # # special handling of "extra yahtzee" bonus per rules
     if (just_rolled_yahtzee and self.yahtzee_bonus_avail): result+=100
 
+#-------------------------------------------------------------
+# UI 
+#-------------------------------------------------------------
 
+proc init_ui(game: GameState) :UI =
+    result.tick_limit = counts(game)
+    result.tick_interval = (result.tick_limit) div 100
+    print "Progress: 0%\r"
+ 
 #-------------------------------------------------------------
 # BUILD CACHE 
 #-------------------------------------------------------------
@@ -704,6 +706,8 @@ proc process_chunk(slots: Slots, upper_total :u8, rolls_remaining: u8, joker_rul
 
 proc build_ev_cache(apex_state: GameState) =
     ## for a given gamestate, calc and cache all the expected values for dependent states. (this is like.. the main thing)
+    
+    var ui = init_ui(apex_state)
 
     var placeholder_dievals = 0.DieVals
 
@@ -734,7 +738,7 @@ proc build_ev_cache(apex_state: GameState) =
         # for each upper total 
         for upper_total in upper_totals: 
 
-            # tick(); # advance the progress bar  
+            ui.tick() # advance the progress bar  
 
             # for each rolls remaining
             for rolls_remaining in 0..3:
@@ -760,16 +764,19 @@ proc build_ev_cache(apex_state: GameState) =
 
 proc main() =
     #test stuff
+
     init_caches()
 
     var game = init_gamestate( 
-        sorted_dievals = [2,2,2,3,5].toDieVals, 
-        open_slots = [7,8,9,10,11,12,13].toSlots, 
-        upper_total = u8 0, 
-        rolls_remaining = u8 3,
+        sorted_dievals = [3,4,4,6,6].toDieVals, 
+        open_slots = [1].toSlots, 
+        upper_total = 0, 
+        rolls_remaining = 1,
         yahtzee_bonus_avail = false 
     )
-    echo score_first_slot_in_context(game)
+
+    build_ev_cache(game)
+    echo "\n", CHOICE_CACHE[game.id], " ", EV_CACHE[game.id]
 
 
 when isMainModule: main()
