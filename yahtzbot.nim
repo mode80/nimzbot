@@ -151,7 +151,7 @@ func toIntArray(self) :array[5,int] = # convert a DieVals to a array of 5 ints
         result[i] = val.int
 
 
-func `[]`(self; i :int): DieVal = # extract a DieVal from a DieVals // TODO: try Nim bitset?
+func `[]`(self; i :int): DieVal = # extract a DieVal from a DieVals 
     assert i >= 0 and i < 5
     var int_self = self.int
     result = DieVal (int_self shr (i * 3)) and 0b111
@@ -346,11 +346,11 @@ type UI = object
 
 ## These are index spans into the OUTCOME_ arrays below which correspond to each dieval selection.
 ## Each of the 32 indecis from 0b00000 to 0b11111 represents the dieval selection as a bitfield 
-const OUTCOMES_IDX_FOR_SELECTION = [(0..<1),(1..<7),(7..<13),(13..<34),(90..<96),(179..<200),(592..<613),
-    (34..<90),(96..<102),(200..<221),(613..<634),(102..<158),(221..<242),(634..<690),(263..<319),
-    (746..<872),(1005..<1011),(158..<179),(319..<340),(690..<746),(242..<263),(872..<928),(1011..<1067),
-    (340..<466),(928..<949),(1067..<1123),(1249..<1305),(466..<592),(949..<1005),(1123..<1249),
-    (1305..<1431),(1431..<1683)] # = cache_selection_ranges()   # TODO confirm these are correct
+const OUTCOMES_IDX_FOR_SELECTION = [(0..<1), (1..<7), (7..<13), (13..<34), (34..<40), (40..<61),
+(61..<82), (82..<138), (138..<144), (144..<165), (165..<186), (186..<242), (242..<263),
+(263..<319), (319..<375), (375..<501), (501..<507), (507..<528), (528..<549), (549..<605),
+(605..<626), (626..<682), (682..<738), (738..<864), (864..<885), (885..<941), (941..<997),
+(997..<1123), (1123..<1179), (1179..<1305), (1305..<1431), (1431..<1683),] 
 
 ## these are filled with cache_roll_outcomes()
 var OUTCOME_DIEVALS: ref array[1683,DieVals] 
@@ -367,31 +367,34 @@ var CHOICE_CACHE {.noInit.} : ref array[1_073_741_824, Choice] # 2^30indexes hol
 
 proc cache_roll_outcomes() = 
     ## preps the caches of roll outcomes data for every possible 5-die selection (where '0' represents an unselected die) 
-    var i = 0
-    let idx_combos: seq[seq[int]] = powerset @[0,1,2,3,4] 
-    assert idx_combos.len==32 
-    let one_thru_six = @[1,2,3,4,5,6] 
     new(OUTCOME_DIEVALS)
     new(OUTCOME_MASKS)
     new(OUTCOME_ARRANGEMENTS)
 
-    for idx_combo in idx_combos:
+    var i = 0
+    let idx_powerset: seq[seq[int]] = powerset @[0,1,2,3,4] 
+    assert idx_powerset.len==32 
+    let one_thru_six = @[1,2,3,4,5,6] 
+
+    for idx_combo in idx_powerset:
         var dievals_arr = [0,0,0,0,0] 
         let die_count = idx_combo.len 
         
-        let combos = combos_with_rep(one_thru_six, die_count) 
+        let dieval_combos = combos_with_rep(one_thru_six, die_count) 
 
-        for die_combo in combos:
+        for dieval_combo in dieval_combos:
             var mask_arr = [0b111,0b111,0b111,0b111,0b111]
             for j, idx in idx_combo:
-                dievals_arr[idx] = die_combo[j]
+                dievals_arr[idx] = dieval_combo[j]
                 mask_arr[idx]=0
-            var arrangement_count = distinct_arrangements_for(die_combo)
             OUTCOME_DIEVALS[i] = dievals_arr.toDieVals
             OUTCOME_MASKS[i] = mask_arr.toDieVals
-            OUTCOME_ARRANGEMENTS[i] = arrangement_count
+            OUTCOME_ARRANGEMENTS[i] = distinct_arrangements_for(dieval_combo)
             inc i
 
+# todo for situation "1,11112, 0,N,1_,00000,4.00", a selection value of 10000 (16) should have the highest EV. but in avg_ev(selection=16), it is averaging outcomes
+# with the mask of 0.0.7.0.0  ... so it seems that OUTCOME_* is out of sync with selection ranges. probably because Nim combos_with_rep is a different algo
+# than the one that generated the selection ranges that I lifted from C(?) I think correct combos list should be in lexigraphic order 
 
 proc cache_sorted_dievals() = 
     # for fast access later, this generates an array indexed by every possible DieVals value,
@@ -512,7 +515,8 @@ proc print_state_choice(s: GameState, c: Choice, ev: f32, threadid: int) =
 
 proc output(s: GameState, choice: Choice, ev: f32, threadid: int) = 
     # Uncomment below for more verbose progress output at the expense of speed 
-    print_state_choice(s, choice, ev, threadid);
+    # print_state_choice(s, choice, ev, threadid);
+    discard
         
 
 #-------------------------------------------------------------
@@ -672,9 +676,6 @@ proc process_state(state: GameState, thread_id: int) =
                 best_choice = selection.Choice
                 best_ev = avg_ev_for_selection
 
-        if state.id == 1073742336 : 
-            var debug=0 
-
         output(state, best_choice, best_ev, thread_id);
         CHOICE_CACHE[state.id] = best_choice # we're writing from multiple threads but each thread will be setting a different state_to_set.id
         EV_CACHE[state.id] = best_ev # " " " " 
@@ -758,12 +759,10 @@ proc build_ev_cache(apex_state: GameState) =
 proc main() =
     #test stuff
 
-    # var s = [1,2,4,5,6,7,8,9,10,11,12,13].toSlots
-    # var dv = [1,1,1,2,1].toDieVals
-    # echo $s
-
-
+    # echo powerset(@[1,2,3,4,5])
+    # echo combos_with_rep(@[1,2,3,4,5], 3)
     init_caches()
+
 
     # var game = init_gamestate( 
     #     sorted_dievals = [3,4,4,6,6].toDieVals, 
@@ -773,15 +772,12 @@ proc main() =
     #     yahtzee_bonus_avail = false 
     # )
 
-    var game = init_gamestate( [3,4,4,6,6].toDieVals, [1].toSlots, 0, 1, false )
-    # var game = init_gamestate( [3,4,4,6,6].toDieVals, [4,5,6].toSlots, 0, 1, false )
-    # var game = init_gamestate( [3,4,4,6,6].toDieVals, [7,8].toSlots, 0, 1, false )
-    # var game = init_gamestate( [3,4,4,6,6].toDieVals, [1,2,8,9,10,11,12,13].toSlots, 0, 1, false )
-    # var game = init_gamestate( [3,4,4,6,6].toDieVals, [1,2,3,4,5,6,7,8,9,10,11,12,13].toSlots, 0, 1, false )
+    # var game = init_gamestate( [3,4,4,6,6].toDieVals, [1].toSlots, 0, 1, false )
+    # var game = init_gamestate( [3,4,4,6,6].toDieVals, [4,5,6].toSlots, 0, 2, false ) #38.9117 
+    # var game = init_gamestate( [3,4,4,6,6].toDieVals, [1,2,8,9,10,11,12,13].toSlots, 0, 2, false ) #137.3749 
+    var game = init_gamestate( [0,0,0,0,0].toDieVals, [1,2,3,4,5,6,7,8,9,10,11,12,13].toSlots, 0, 3, false ) # 254.5896 
 
     build_ev_cache(game)
-    # for s in game.open_slots: 
-    #     echo s, "_"
 
     echo "\n", CHOICE_CACHE[game.id], " ", EV_CACHE[game.id]
 
