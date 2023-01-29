@@ -536,8 +536,8 @@ proc avg_ev(start_dievals: DieVals, selection:Selection, slots: Slots, upper_tot
     var total_ev_for_selection: f32 = 0.0 
     var outcomes_arrangements_count: f32 = 0.0
     var range = OUTCOMES_IDX_FOR_SELECTION[selection]
-    var OUTCOME_EVS_BUFFER: array[1683,f32] 
-    var NEWVALS_BUFFER: array[1683,DieVals]
+    var OUTCOME_EVS_BUFFER {.noinit.} : array[1683,f32]
+    var NEWVALS_BUFFER {.noinit.} : array[1683,DieVals] 
 
     var floor_state = init_gamestate(
         0.DieVals,
