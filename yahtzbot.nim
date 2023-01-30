@@ -27,7 +27,21 @@ type
 # UTILS 
 # -------------------------------------------------------------
 
+# iterator unroll*[S, T](a: S, b: T, annotation: static string): T {.
+#   inline, magic: "OmpParFor", sideEffect.} =
+#   discard
+
+# template unroll*(a, b: SomeInteger; unroll: static Positive = 4): untyped =
+#   when defined(gcc):
+#     system.unroll(a, b, "GCC unroll " & $unroll)
+
 macro `:=` (name, value :untyped) :untyped = newVarStmt(name, value) ## walrus for a:=1 assignment. mostly unused POC
+
+iterator `|||`[S, T](a: S, b: T): T {.inline, sideEffect.} = 
+    ## a special iterator that encourages the compiler to apply loop vectorization 
+    ## works by abusing the built in || iterator to inject arbitrary loop preface #pragmas 
+    for i in `||`(a,b, "simd \n#pragma GCC ivdepi \n#pragma clang loop vectorize(enable)") : 
+        yield i
 
 proc print(it :string) =
     ## print to stdout, without a newline
@@ -550,24 +564,19 @@ proc avg_ev(start_dievals: DieVals, selection:Selection, slots: Slots, upper_tot
     # from this floor gamestate we can blend in a dievals_id to quickly calc the index we need to access the ev for the complete state 
 
     # blit all each roll outcome for the given dice selection onto the unrolled start_dievals and stash results in the NEWVALS_BUFFER 
-    #pragma GCC ivdepi # one tries. no help with auto SIMD in GCC AFAICT
-    #pragma clang loop vectorize(enable) # clang does does appear to auto-SIMD this loop
-    for i in range :
+    for i in range.a ||| range.b :  # the custom ||| operator is for a SIMD friendly loop
         NEWVALS_BUFFER[i] = (start_dievals.u16 and OUTCOME_MASKS[i].u16).DieVals #make some holes in the dievals for newly rolled die vals 
         NEWVALS_BUFFER[i] = (NEWVALS_BUFFER[i].u16 or OUTCOME_DIEVALS[i].u16).DieVals # fill in the holes with the newly rolled die vals
-        # TODO try OUTCOME_* arrays in on the stack instead of global for speed increase?? 
 
     for i in range: # this loop is a bunch of lookups so doesn't benefit from SIMD
         #= gather sorted =#
-            var newvals_idx = NEWVALS_BUFFER[i].int
-            var sorted_dievals_id = SORTED_DIEVAL_IDS[newvals_idx].int
+        var newvals_idx = NEWVALS_BUFFER[i].int
+        var sorted_dievals_id = SORTED_DIEVAL_IDS[newvals_idx].int
         #= gather ev =#
-            var state_to_get_id = floor_state_idx or sorted_dievals_id
-            OUTCOME_EVS_BUFFER[i] = EV_CACHE[state_to_get_id]
+        var state_to_get_id = floor_state_idx or sorted_dievals_id
+        OUTCOME_EVS_BUFFER[i] = EV_CACHE[state_to_get_id]
 
-    #pragma GCC ivdepi 
-    #pragma clang loop vectorize(enable)
-    for i in range:  # this loop is all math so should be eligble for SIMD optimization
+    for i in range.a ||| range.b:
         # we have EVs for each "combination" but we need the average all "permutations" 
         # -- so we mutliply by the number of distinct arrangements for each combo 
         var count = OUTCOME_ARRANGEMENTS[i]
