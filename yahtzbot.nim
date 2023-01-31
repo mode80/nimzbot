@@ -1,4 +1,4 @@
-import macros, options, tables, sequtils, math, algorithm, strformat 
+import macros, options, tables, sequtils, math, algorithm, strformat, threadpool
 {. hint[XDeclaredButNotUsed]:off .}
 # {.experimental: "views".}
 # {.experimental: "codeReordering".}
@@ -366,11 +366,11 @@ const OUTCOMES_IDX_FOR_SELECTION = [(0..<1), (1..<7), (7..<13), (13..<34), (34..
 (605..<626), (626..<682), (682..<738), (738..<864), (864..<885), (885..<941), (941..<997),
 (997..<1123), (1123..<1179), (1179..<1305), (1305..<1431), (1431..<1683),] 
 
-func cache_roll_outcomes(): (array[1683,DieVals], array[1683,DieVals], array[1683,f32]) = 
+func make_roll_outcomes(): (array[1683,DieVals], array[1683,DieVals], array[1683,f32]) = 
     ## preps the caches of roll outcomes data for every possible 5-die selection (where '0' represents an unselected die) 
-    var OUTCOME_DIEVALS: array[1683,DieVals]
-    var OUTCOME_MASKS: array[1683,DieVals]
-    var OUTCOME_ARRANGEMENTS: array[1683,f32]
+    var OUTCOME_DIEVALS {.noinit.} : array[1683,DieVals]
+    var OUTCOME_MASKS {.noinit.} : array[1683,DieVals]
+    var OUTCOME_ARRANGEMENTS {.noinit.} : array[1683,f32]
 
     var i = 0
     let idx_powerset: seq[seq[int]] = powerset @[0,1,2,3,4] 
@@ -416,11 +416,15 @@ func make_sorted_dievals(): (array[32767, DieVals], array[32767, u8]) =
     result = (SORTED_DIEVALS, SORTED_DIEVAL_IDS)
 
 
-const (OUTCOME_DIEVALS, OUTCOME_MASKS, OUTCOME_ARRANGEMENTS) = cache_roll_outcomes()
+const (OUTCOME_DIEVALS, OUTCOME_MASKS, OUTCOME_ARRANGEMENTS) = make_roll_outcomes()
 const (SORTED_DIEVALS, SORTED_DIEVAL_IDS) = make_sorted_dievals()
 
-var EV_CACHE   {.noInit.} :ref array[1_073_741_824, f32]; new(EV_CACHE) # 2^30 indexes hold all game state EVs
-var CHOICE_CACHE {.noInit.} : ref array[1_073_741_824, Choice]; new(CHOICE_CACHE) # 2^30indexes hold all corresponding Choices
+# var EV_CACHE   {.noInit.} :ref array[1_073_741_824, f32] ; new(EV_CACHE) # 2^30 indexes hold all game state EVs
+# var CHOICE_CACHE {.noInit.} :ref array[1_073_741_824, Choice] ; new(CHOICE_CACHE) # 2^30indexes hold all corresponding Choices
+# let EV_CACHE = EV_CACHE_ARR.addr
+# let CHOICE_CACHE = CHOICE_CACHE_ARR.addr
+var EV_CACHE = cast[ptr UncheckedArray[f32]](createSharedU(f32, 1_073_741_824))
+var CHOICE_CACHE = cast[ptr UncheckedArray[Choice]](createSharedU(Choice, 1_073_741_824))
 
 
 # ------------------------------------------------------------
@@ -525,9 +529,9 @@ proc output(s: GameState, choice: Choice, ev: f32, threadid: int) =
 # BUILD CACHE 
 #-------------------------------------------------------------
 
-var ALL_DICE = 0b11111.Selection #selections are bitfields where '1' means roll and '0' mean don't
-var SELECTION_SET_OF_ALL_DICE_ONLY = @[ALL_DICE] 
-var SET_OF_ALL_SELECTIONS = toSeq(0b00000.Selection..0b11111.Selection)
+const ALL_DICE = 0b11111.Selection #selections are bitfields where '1' means roll and '0' mean don't
+const SELECTION_SET_OF_ALL_DICE_ONLY = @[ALL_DICE] 
+const SET_OF_ALL_SELECTIONS = toSeq(0b00000.Selection..0b11111.Selection)
 
 
 proc avg_ev(start_dievals: DieVals, selection:Selection, slots: Slots, upper_total: u8, 
@@ -682,9 +686,9 @@ proc process_state(state: GameState, thread_id: int) = #{.thread.}=
 # end process_state
 
 # type ProcessChunkArgs= tuple[slots: Slots, upper_total :u8, rolls_remaining: u8, joker_possible: bool, chunk_range: HSlice[int,int], thread_id: int]
-# proc process_chunk(args: ProcessChunkArgs) {.thread.}=
 
 proc process_chunk(slots: Slots, upper_total :u8, rolls_remaining: u8, joker_possible: bool, chunk_range: HSlice[int,int], thread_id: int) = #{.thread.}=
+# proc process_chunk(args: ProcessChunkArgs) {.thread.}=
 
     # var (slots, upper_total, rolls_remaining, joker_possible, chunk_range, thread_id) = args
 
@@ -757,6 +761,8 @@ proc build_ev_cache(apex_state: GameState) =
                     process_chunk( slots, upper_total.u8, rolls_remaining.u8, joker_possible, chunk_range, thread_id )
                     inc thread_id
 
+                # sync()# wait for all threads to finish
+
 
 #-------------------------------------------------------------
 # MAIN
@@ -765,22 +771,10 @@ proc build_ev_cache(apex_state: GameState) =
 proc main() =
     #test stuff
 
-    # echo powerset(@[1,2,3,4,5])
-    # echo combos_with_rep(@[1,2,3,4,5], 3)
-
-
-    # var game = init_gamestate( 
-    #     sorted_dievals = [3,4,4,6,6].toDieVals, 
-    #     open_slots = [1].toSlots, 
-    #     upper_total = 0, 
-    #     rolls_remaining = 1,
-    #     yahtzee_bonus_avail = false 
-    # )
-
     # var game = init_gamestate( [3,4,4,6,6].toDieVals, [1].toSlots, 0, 1, false )
     # var game = init_gamestate( [3,4,4,6,6].toDieVals, [4,5,6].toSlots, 0, 2, false ) #38.9117 
-    var game = init_gamestate( [3,4,4,6,6].toDieVals, [1,2,8,9,10,11,12,13].toSlots, 0, 2, false ) #137.3749 
-    # var game = init_gamestate( [0,0,0,0,0].toDieVals, [1,2,3,4,5,6,7,8,9,10,11,12,13].toSlots, 0, 3, false ) # 254.5896 
+    # var game = init_gamestate( [3,4,4,6,6].toDieVals, [1,2,8,9,10,11,12,13].toSlots, 0, 2, false ) #137.3749 
+    var game = init_gamestate( [0,0,0,0,0].toDieVals, [1,2,3,4,5,6,7,8,9,10,11,12,13].toSlots, 0, 3, false ) # 254.5896 
 
     build_ev_cache(game)
 
