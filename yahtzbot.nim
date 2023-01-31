@@ -514,14 +514,14 @@ proc print_state_choice(s: GameState, c: Choice, ev: f32, threadid: int) =
     ## sample output:     2,33366,63,Y,1_,00011,9.61
     const N_Y = ['N','Y'] 
     if s.rolls_remaining==0: 
-        echo &"{s.rolls_remaining},{$s.sorted_dievals},{s.upper_total:2d},{N_Y[s.yahtzee_bonus_avail.int]},{s.open_slots},{c:05d},{ev:0.2f}"
+        echo &"{threadid:2d}|{s.rolls_remaining},{$s.sorted_dievals},{s.upper_total:2d},{N_Y[s.yahtzee_bonus_avail.int]},{s.open_slots},{c:05d},{ev:0.2f}"
     else:
-        echo &"{s.rolls_remaining},{$s.sorted_dievals},{s.upper_total:2d},{N_Y[s.yahtzee_bonus_avail.int]},{s.open_slots},{c:05b},{ev:0.2f}"
+        echo &"{threadid:2d}|{s.rolls_remaining},{$s.sorted_dievals},{s.upper_total:2d},{N_Y[s.yahtzee_bonus_avail.int]},{s.open_slots},{c:05b},{ev:0.2f}"
     # format strings formatter syntax: [[fill]align][sign][#][0][minimumwidth][.precision][type]
 
 proc output(s: GameState, choice: Choice, ev: f32, threadid: int) = 
     # Uncomment below for more verbose progress output at the expense of speed 
-    # print_state_choice(s, choice, ev, threadid);
+    print_state_choice(s, choice, ev, threadid);
     discard
         
 
@@ -758,10 +758,10 @@ proc build_ev_cache(apex_state: GameState) =
                     # var args = (slots, upper_total.u8, rolls_remaining.u8, joker_possible, chunk_range, thread_id) 
                     # var thread: Thread[ProcessChunkArgs]
                     # createThread(thread, process_chunk,args) 
-                    process_chunk( slots, upper_total.u8, rolls_remaining.u8, joker_possible, chunk_range, thread_id )
+                    spawn process_chunk( slots, upper_total.u8, rolls_remaining.u8, joker_possible, chunk_range, thread_id )
                     inc thread_id
 
-                # sync()# wait for all threads to finish
+                sync()# wait for all threads to finish
 
 
 #-------------------------------------------------------------
@@ -771,10 +771,10 @@ proc build_ev_cache(apex_state: GameState) =
 proc main() =
     #test stuff
 
-    # var game = init_gamestate( [3,4,4,6,6].toDieVals, [1].toSlots, 0, 1, false )
+    var game = init_gamestate( [3,4,4,6,6].toDieVals, [1].toSlots, 0, 1, false )
     # var game = init_gamestate( [3,4,4,6,6].toDieVals, [4,5,6].toSlots, 0, 2, false ) #38.9117 
     # var game = init_gamestate( [3,4,4,6,6].toDieVals, [1,2,8,9,10,11,12,13].toSlots, 0, 2, false ) #137.3749 
-    var game = init_gamestate( [0,0,0,0,0].toDieVals, [1,2,3,4,5,6,7,8,9,10,11,12,13].toSlots, 0, 3, false ) # 254.5896 
+    # var game = init_gamestate( [0,0,0,0,0].toDieVals, [1,2,3,4,5,6,7,8,9,10,11,12,13].toSlots, 0, 3, false ) # 254.5896 
 
     build_ev_cache(game)
 
