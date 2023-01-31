@@ -1,6 +1,6 @@
-import macros, options, tables, sequtils, math, algorithm, strformat
+import macros, options, tables, sequtils, math, algorithm, strformat 
 {. hint[XDeclaredButNotUsed]:off .}
-{.experimental: "views".}
+# {.experimental: "views".}
 # {.experimental: "codeReordering".}
 
 # -------------------------------------------------------------
@@ -40,8 +40,8 @@ macro `:=` (name, value :untyped) :untyped = newVarStmt(name, value) ## walrus f
 iterator `|||`[S, T](a: S, b: T): T {.inline, sideEffect.} = 
     ## a special iterator that encourages the compiler to apply loop vectorization 
     ## works by abusing the built in || iterator to inject arbitrary loop preface #pragmas 
-    for i in `||`(a,b, "simd \n#pragma GCC ivdepi \n#pragma clang loop vectorize(enable)") : 
-        yield i
+    for i in `||`(a,b, "simd \n#pragma GCC ivdepi \n#pragma clang loop vectorize(enable)\n#pragma FP_CONTRACT STDC ON\n#pragma float_control(precise, off)") : 
+        yield i # others? https://www.openmp.org/wp-content/uploads/OpenMP-4.5-1115-CPP-web.pdf
 
 proc print(it :string) =
     ## print to stdout, without a newline
@@ -349,7 +349,7 @@ func score_slot_with_dice(slot, sorted_dievals) :u8 =
 # INITIALIZERS etc
 # -------------------------------------------------------------
 
-const NUM_THREADS=1
+const NUM_THREADS=6
 
 type UI = object
     tick_limit: int 
@@ -366,24 +366,11 @@ const OUTCOMES_IDX_FOR_SELECTION = [(0..<1), (1..<7), (7..<13), (13..<34), (34..
 (605..<626), (626..<682), (682..<738), (738..<864), (864..<885), (885..<941), (941..<997),
 (997..<1123), (1123..<1179), (1179..<1305), (1305..<1431), (1431..<1683),] 
 
-## these are filled with cache_roll_outcomes()
-var OUTCOME_DIEVALS: ref array[1683,DieVals] 
-var OUTCOME_MASKS: ref array[1683,DieVals] 
-var OUTCOME_ARRANGEMENTS: ref array[1683,f32] 
-
-# these are filled by cache_sorted_dievals()
-var SORTED_DIEVALS: ref array[32767, DieVals]
-var SORTED_DIEVAL_IDS: ref array[32767, u8]
-
-# ## these are filled by build_ev_cache()
-var EV_CACHE   {.noInit.} :ref array[1_073_741_824, f32] # 2^30 indexes hold all game state EVs
-var CHOICE_CACHE {.noInit.} : ref array[1_073_741_824, Choice] # 2^30indexes hold all corresponding Choices
-
-proc cache_roll_outcomes() = 
+func cache_roll_outcomes(): (array[1683,DieVals], array[1683,DieVals], array[1683,f32]) = 
     ## preps the caches of roll outcomes data for every possible 5-die selection (where '0' represents an unselected die) 
-    new(OUTCOME_DIEVALS)
-    new(OUTCOME_MASKS)
-    new(OUTCOME_ARRANGEMENTS)
+    var OUTCOME_DIEVALS: array[1683,DieVals]
+    var OUTCOME_MASKS: array[1683,DieVals]
+    var OUTCOME_ARRANGEMENTS: array[1683,f32]
 
     var i = 0
     let idx_powerset: seq[seq[int]] = powerset @[0,1,2,3,4] 
@@ -406,15 +393,14 @@ proc cache_roll_outcomes() =
             OUTCOME_ARRANGEMENTS[i] = distinct_arrangements_for(dieval_combo)
             inc i
 
-# todo for situation "1,11112, 0,N,1_,00000,4.00", a selection value of 10000 (16) should have the highest EV. but in avg_ev(selection=16), it is averaging outcomes
-# with the mask of 0.0.7.0.0  ... so it seems that OUTCOME_* is out of sync with selection ranges. probably because Nim combos_with_rep is a different algo
-# than the one that generated the selection ranges that I lifted from C(?) I think correct combos list should be in lexigraphic order 
+    result = (OUTCOME_DIEVALS, OUTCOME_MASKS, OUTCOME_ARRANGEMENTS)
 
-proc cache_sorted_dievals() = 
+
+func make_sorted_dievals(): (array[32767, DieVals], array[32767, u8]) = 
     # for fast access later, this generates an array indexed by every possible DieVals value,
     # with each entry being the DieVals in sorted form, along with each's unique "ID" between 0-252, 
-    new(SORTED_DIEVALS)
-    new(SORTED_DIEVAL_IDS)
+    var SORTED_DIEVALS {.noinit.} : array[32767, DieVals]
+    var SORTED_DIEVAL_IDS {.noinit.} : array[32767, u8]
     SORTED_DIEVALS[0] = 0.DieVals #// first one is for the special wildcard 
     SORTED_DIEVAL_IDS[0] = 0.u8 #// first one is for the special wildcard 
     let one_to_six = @[1,2,3,4,5,6] 
@@ -427,13 +413,15 @@ proc cache_sorted_dievals() =
             let dv_perm:DieVals = perm.toDieVals
             SORTED_DIEVALS[dv_perm.int] = dv_sorted 
             SORTED_DIEVAL_IDS[dv_perm.int] = i.u8
+    result = (SORTED_DIEVALS, SORTED_DIEVAL_IDS)
 
-proc init_caches() =
-    ## setup helper values
-    cache_sorted_dievals() 
-    cache_roll_outcomes()
-    new(EV_CACHE)
-    new(CHOICE_CACHE)
+
+const (OUTCOME_DIEVALS, OUTCOME_MASKS, OUTCOME_ARRANGEMENTS) = cache_roll_outcomes()
+const (SORTED_DIEVALS, SORTED_DIEVAL_IDS) = make_sorted_dievals()
+
+var EV_CACHE   {.noInit.} :ref array[1_073_741_824, f32]; new(EV_CACHE) # 2^30 indexes hold all game state EVs
+var CHOICE_CACHE {.noInit.} : ref array[1_073_741_824, Choice]; new(CHOICE_CACHE) # 2^30indexes hold all corresponding Choices
+
 
 # ------------------------------------------------------------
 # GAMESTATE 
@@ -448,7 +436,7 @@ type GameState = object
     upper_total: u8             # 6 bits       
     rolls_remaining: u8         # 2 bits 
 
-proc init_gamestate(sorted_dievals: DieVals, open_slots: Slots, upper_total: u8, rolls_remaining: u8, yahtzee_bonus_avail: bool): GameState =
+proc init_gamestate(sorted_dievals: DieVals, open_slots: Slots, upper_total: u8, rolls_remaining: u8, yahtzee_bonus_avail: bool): GameState {.thread.}=
     var id:u32
     var dievals_id = SORTED_DIEVAL_IDS[sorted_dievals.int] # self.id will use 30 bits total...
     id= (dievals_id.u32) or # this is the 8-bit encoding of self.sorted_dievals
@@ -580,7 +568,7 @@ proc avg_ev(start_dievals: DieVals, selection:Selection, slots: Slots, upper_tot
         # we have EVs for each "combination" but we need the average all "permutations" 
         # -- so we mutliply by the number of distinct arrangements for each combo 
         var count = OUTCOME_ARRANGEMENTS[i]
-        total_ev_for_selection +=  OUTCOME_EVS_BUFFER[i] * count 
+        total_ev_for_selection = OUTCOME_EVS_BUFFER[i] * count + total_ev_for_selection
         outcomes_arrangements_count += count
 
     # this final step gives us the average EV for all permutations of rolled dice 
@@ -589,7 +577,7 @@ proc avg_ev(start_dievals: DieVals, selection:Selection, slots: Slots, upper_tot
 # end avg_ev
 
 
-proc process_state(state: GameState, thread_id: int) = 
+proc process_state(state: GameState, thread_id: int) = #{.thread.}= 
     ## this does the work of calculating and store the expected value of a single gamestate
 
     var best_choice: Choice = 0
@@ -693,7 +681,12 @@ proc process_state(state: GameState, thread_id: int) =
 
 # end process_state
 
-proc process_chunk(slots: Slots, upper_total :u8, rolls_remaining: u8, joker_possible: bool, chunk_range: Slice, thread_id: int) =
+# type ProcessChunkArgs= tuple[slots: Slots, upper_total :u8, rolls_remaining: u8, joker_possible: bool, chunk_range: HSlice[int,int], thread_id: int]
+# proc process_chunk(args: ProcessChunkArgs) {.thread.}=
+
+proc process_chunk(slots: Slots, upper_total :u8, rolls_remaining: u8, joker_possible: bool, chunk_range: HSlice[int,int], thread_id: int) = #{.thread.}=
+
+    # var (slots, upper_total, rolls_remaining, joker_possible, chunk_range, thread_id) = args
 
     #for each yahtzee bonus possibility 
     for yahtzee_bonus_avail in false..joker_possible:
@@ -758,8 +751,12 @@ proc build_ev_cache(apex_state: GameState) =
                 # for each dieval_combo chunk
                 for chunk_idx in countup(outcome_range.a, outcome_range.b, step=chunk_count): 
                     var chunk_range = chunk_idx..min(chunk_idx+chunk_count-1, outcome_range.b)
-                    process_chunk(slots, upper_total.u8, rolls_remaining.u8, joker_possible, chunk_range, thread_id)
+                    # var args = (slots, upper_total.u8, rolls_remaining.u8, joker_possible, chunk_range, thread_id) 
+                    # var thread: Thread[ProcessChunkArgs]
+                    # createThread(thread, process_chunk,args) 
+                    process_chunk( slots, upper_total.u8, rolls_remaining.u8, joker_possible, chunk_range, thread_id )
                     inc thread_id
+
 
 #-------------------------------------------------------------
 # MAIN
@@ -770,7 +767,6 @@ proc main() =
 
     # echo powerset(@[1,2,3,4,5])
     # echo combos_with_rep(@[1,2,3,4,5], 3)
-    init_caches()
 
 
     # var game = init_gamestate( 
@@ -783,8 +779,8 @@ proc main() =
 
     # var game = init_gamestate( [3,4,4,6,6].toDieVals, [1].toSlots, 0, 1, false )
     # var game = init_gamestate( [3,4,4,6,6].toDieVals, [4,5,6].toSlots, 0, 2, false ) #38.9117 
-    # var game = init_gamestate( [3,4,4,6,6].toDieVals, [1,2,8,9,10,11,12,13].toSlots, 0, 2, false ) #137.3749 
-    var game = init_gamestate( [0,0,0,0,0].toDieVals, [1,2,3,4,5,6,7,8,9,10,11,12,13].toSlots, 0, 3, false ) # 254.5896 
+    var game = init_gamestate( [3,4,4,6,6].toDieVals, [1,2,8,9,10,11,12,13].toSlots, 0, 2, false ) #137.3749 
+    # var game = init_gamestate( [0,0,0,0,0].toDieVals, [1,2,3,4,5,6,7,8,9,10,11,12,13].toSlots, 0, 3, false ) # 254.5896 
 
     build_ev_cache(game)
 
