@@ -1,4 +1,4 @@
-import macros, options, tables, sequtils, math, algorithm, strformat, threadpool
+import macros, options, tables, sequtils, math, algorithm, strformat#, threadpool
 {. hint[XDeclaredButNotUsed]:off .}
 # {.experimental: "views".}
 # {.experimental: "codeReordering".}
@@ -521,7 +521,7 @@ proc print_state_choice(s: GameState, c: Choice, ev: f32, threadid: int) =
 
 proc output(s: GameState, choice: Choice, ev: f32, threadid: int) = 
     # Uncomment below for more verbose progress output at the expense of speed 
-    print_state_choice(s, choice, ev, threadid);
+    # print_state_choice(s, choice, ev, threadid);
     discard
         
 
@@ -685,12 +685,12 @@ proc process_state(state: GameState, thread_id: int) = #{.thread.}=
 
 # end process_state
 
-# type ProcessChunkArgs= tuple[slots: Slots, upper_total :u8, rolls_remaining: u8, joker_possible: bool, chunk_range: HSlice[int,int], thread_id: int]
+type ProcessChunkArgs= tuple[slots: Slots, upper_total :u8, rolls_remaining: u8, joker_possible: bool, chunk_range: HSlice[int,int], thread_id: int]
 
-proc process_chunk(slots: Slots, upper_total :u8, rolls_remaining: u8, joker_possible: bool, chunk_range: HSlice[int,int], thread_id: int) = #{.thread.}=
-# proc process_chunk(args: ProcessChunkArgs) {.thread.}=
+# proc process_chunk(slots: Slots, upper_total :u8, rolls_remaining: u8, joker_possible: bool, chunk_range: HSlice[int,int], thread_id: int) = #{.thread.}=
+proc process_chunk(args: ProcessChunkArgs) {.thread.}=
 
-    # var (slots, upper_total, rolls_remaining, joker_possible, chunk_range, thread_id) = args
+    var (slots, upper_total, rolls_remaining, joker_possible, chunk_range, thread_id) = args
 
     #for each yahtzee bonus possibility 
     for yahtzee_bonus_avail in false..joker_possible:
@@ -705,6 +705,8 @@ proc process_chunk(slots: Slots, upper_total :u8, rolls_remaining: u8, joker_pos
 
 proc build_ev_cache(apex_state: GameState) =
     ## for a given gamestate, calc and cache all the expected values for dependent states. (this is like.. the main thing)
+
+    var threads: array[NUM_THREADS, Thread[ProcessChunkArgs]]
     
     var ui = init_ui(apex_state)
 
@@ -755,13 +757,14 @@ proc build_ev_cache(apex_state: GameState) =
                 # for each dieval_combo chunk
                 for chunk_idx in countup(outcome_range.a, outcome_range.b, step=chunk_count): 
                     var chunk_range = chunk_idx..min(chunk_idx+chunk_count-1, outcome_range.b)
-                    # var args = (slots, upper_total.u8, rolls_remaining.u8, joker_possible, chunk_range, thread_id) 
-                    # var thread: Thread[ProcessChunkArgs]
-                    # createThread(thread, process_chunk,args) 
-                    spawn process_chunk( slots, upper_total.u8, rolls_remaining.u8, joker_possible, chunk_range, thread_id )
-                    inc thread_id
+                    var args = (slots, upper_total.u8, rolls_remaining.u8, joker_possible, chunk_range, thread_id) 
+                    if chunk_count==1: 
+                        process_chunk(args)
+                    else:
+                        createThread threads[thread_id], process_chunk, args 
+                        inc thread_id
 
-                sync()# wait for all threads to finish
+                joinThreads(threads)# wait for all threads to finish
 
 
 #-------------------------------------------------------------
@@ -771,10 +774,10 @@ proc build_ev_cache(apex_state: GameState) =
 proc main() =
     #test stuff
 
-    var game = init_gamestate( [3,4,4,6,6].toDieVals, [1].toSlots, 0, 1, false )
+    # var game = init_gamestate( [3,4,4,6,6].toDieVals, [1].toSlots, 0, 1, false )
     # var game = init_gamestate( [3,4,4,6,6].toDieVals, [4,5,6].toSlots, 0, 2, false ) #38.9117 
     # var game = init_gamestate( [3,4,4,6,6].toDieVals, [1,2,8,9,10,11,12,13].toSlots, 0, 2, false ) #137.3749 
-    # var game = init_gamestate( [0,0,0,0,0].toDieVals, [1,2,3,4,5,6,7,8,9,10,11,12,13].toSlots, 0, 3, false ) # 254.5896 
+    var game = init_gamestate( [0,0,0,0,0].toDieVals, [1,2,3,4,5,6,7,8,9,10,11,12,13].toSlots, 0, 3, false ) # 254.5896 
 
     build_ev_cache(game)
 
