@@ -1,6 +1,5 @@
-import macros, options, tables, sequtils, math, algorithm, strformat#, threadpool
+import options, tables, sequtils, math, algorithm, strformat#, threadpool
 {. hint[XDeclaredButNotUsed]:off .}
-# {.experimental: "views".}
 # {.experimental: "codeReordering".}
 
 # -------------------------------------------------------------
@@ -26,16 +25,6 @@ type
 # -------------------------------------------------------------
 # UTILS 
 # -------------------------------------------------------------
-
-# iterator unroll*[S, T](a: S, b: T, annotation: static string): T {.
-#   inline, magic: "OmpParFor", sideEffect.} =
-#   discard
-
-# template unroll*(a, b: SomeInteger; unroll: static Positive = 4): untyped =
-#   when defined(gcc):
-#     system.unroll(a, b, "GCC unroll " & $unroll)
-
-macro `:=` (name, value :untyped) :untyped = newVarStmt(name, value) ## walrus for a:=1 assignment. mostly unused POC
 
 iterator `|||`[S, T](a: S, b: T): T {.inline, sideEffect.} = 
     ## a special iterator that encourages the compiler to apply loop vectorization 
@@ -79,7 +68,7 @@ func n_take_r (n :int, r :int, order_matters :bool = false, with_replacement :bo
 
 
 proc combos_with_rep [T] (list :seq[T], k: int): seq[seq[T]] =
-
+    ## combos with repetition
     if k == 0:
         @[newSeq[T]()]
     elif list.len == 0:
@@ -212,8 +201,6 @@ func toSlotSeq(self) :seq[Slot] = ## convert a Slots to a seq of Slots
     for slot in self: result.add slot
 
 func `$`(self) :string = ## convert a Slots to a string
-    # # var int_self= cast[int](self)
-    # result = &"{int_self:b}"
     for slot in self:
         result.add $slot.int
         result.add '_' 
@@ -419,10 +406,6 @@ func make_sorted_dievals(): (array[32767, DieVals], array[32767, u8]) =
 const (OUTCOME_DIEVALS, OUTCOME_MASKS, OUTCOME_ARRANGEMENTS) = make_roll_outcomes()
 const (SORTED_DIEVALS, SORTED_DIEVAL_IDS) = make_sorted_dievals()
 
-# var EV_CACHE   {.noInit.} :ref array[1_073_741_824, f32] ; new(EV_CACHE) # 2^30 indexes hold all game state EVs
-# var CHOICE_CACHE {.noInit.} :ref array[1_073_741_824, Choice] ; new(CHOICE_CACHE) # 2^30indexes hold all corresponding Choices
-# let EV_CACHE = EV_CACHE_ARR.addr
-# let CHOICE_CACHE = CHOICE_CACHE_ARR.addr
 var EV_CACHE = cast[ptr UncheckedArray[f32]](createSharedU(f32, 1_073_741_824))
 var CHOICE_CACHE = cast[ptr UncheckedArray[Choice]](createSharedU(Choice, 1_073_741_824))
 
@@ -440,7 +423,7 @@ type GameState = object
     upper_total: u8             # 6 bits       
     rolls_remaining: u8         # 2 bits 
 
-proc init_gamestate(sorted_dievals: DieVals, open_slots: Slots, upper_total: u8, rolls_remaining: u8, yahtzee_bonus_avail: bool): GameState {.thread.}=
+func init(T: type GameState, sorted_dievals: DieVals, open_slots: Slots, upper_total: u8, rolls_remaining: u8, yahtzee_bonus_avail: bool): GameState {.thread.}= 
     var id:u32
     var dievals_id = SORTED_DIEVAL_IDS[sorted_dievals.int] # self.id will use 30 bits total...
     id= (dievals_id.u32) or # this is the 8-bit encoding of self.sorted_dievals
@@ -456,7 +439,6 @@ proc init_gamestate(sorted_dievals: DieVals, open_slots: Slots, upper_total: u8,
         upper_total: upper_total, 
         rolls_remaining: rolls_remaining 
     )
-
 
 func counts(self: GameState): int = 
     ## calculate relevant counts for gamestate: required lookups and saves
@@ -517,7 +499,6 @@ proc print_state_choice(s: GameState, c: Choice, ev: f32, threadid: int) =
         echo &"{threadid:2d}|{s.rolls_remaining},{$s.sorted_dievals},{s.upper_total:2d},{N_Y[s.yahtzee_bonus_avail.int]},{s.open_slots},{c:05d},{ev:0.2f}"
     else:
         echo &"{threadid:2d}|{s.rolls_remaining},{$s.sorted_dievals},{s.upper_total:2d},{N_Y[s.yahtzee_bonus_avail.int]},{s.open_slots},{c:05b},{ev:0.2f}"
-    # format strings formatter syntax: [[fill]align][sign][#][0][minimumwidth][.precision][type]
 
 proc output(s: GameState, choice: Choice, ev: f32, threadid: int) = 
     # Uncomment below for more verbose progress output at the expense of speed 
@@ -545,7 +526,7 @@ proc avg_ev(start_dievals: DieVals, selection:Selection, slots: Slots, upper_tot
     var OUTCOME_EVS_BUFFER {.noinit.} : array[1683,f32]
     var NEWVALS_BUFFER {.noinit.} : array[1683,DieVals] 
 
-    var floor_state = init_gamestate(
+    var floor_state = GameState.init(
         0.DieVals,
         slots, 
         upper_total, 
@@ -615,7 +596,7 @@ proc process_state(state: GameState, thread_id: int) = #{.thread.}=
 
                 var slots_piece = if pass==1: {head_slot} else: state.open_slots.removing head_slot # work on 1)the head only, or 2) the set without the head
                 var relevant_upper_total = if (upper_total_now + best_upper_total(slots_piece).u8 >= 63): upper_total_now else: 0 # only relevant totals are cached
-                var state_to_get: GameState = init_gamestate(
+                var state_to_get = GameState.init(
                     dievals_or_placeholder,
                     slots_piece, 
                     relevant_upper_total,
@@ -699,7 +680,7 @@ proc process_chunk(args: ProcessChunkArgs) {.thread.}=
         # for combo in OUTCOME_DIEVALS[1..3]:
         for i in chunk_range:
             var combo = OUTCOME_DIEVALS[i] 
-            var state = init_gamestate( combo, slots , upper_total.u8, rolls_remaining.u8, yahtzee_bonus_avail)
+            var state = GameState.init(combo, slots , upper_total.u8, rolls_remaining.u8, yahtzee_bonus_avail)
             process_state(state, thread_id)
 
 
@@ -723,7 +704,7 @@ proc build_ev_cache(apex_state: GameState) =
             for upper_total in upper_totals:
                 # for each outcome_combo 
                 for outcome_combo in OUTCOME_DIEVALS[ OUTCOMES_IDX_FOR_SELECTION[ ALL_DICE ] ]: 
-                    var state = init_gamestate( outcome_combo, single_slot_set, upper_total.u8, 0.u8, yahtzee_bonus_avail )
+                    var state = GameState.init(outcome_combo, single_slot_set, upper_total.u8, 0.u8, yahtzee_bonus_avail)
                     var score = score_first_slot_in_context(state) 
                     CHOICE_CACHE[state.id] = single_slot.Choice
                     EV_CACHE[state.id] = score.f32
@@ -774,10 +755,10 @@ proc build_ev_cache(apex_state: GameState) =
 proc main() =
     #test stuff
 
-    # var game = init_gamestate( [3,4,4,6,6].toDieVals, [1].toSlots, 0, 1, false )
-    # var game = init_gamestate( [3,4,4,6,6].toDieVals, [4,5,6].toSlots, 0, 2, false ) #38.9117 
-    # var game = init_gamestate( [3,4,4,6,6].toDieVals, [1,2,8,9,10,11,12,13].toSlots, 0, 2, false ) #137.3749 
-    var game = init_gamestate( [0,0,0,0,0].toDieVals, [1,2,3,4,5,6,7,8,9,10,11,12,13].toSlots, 0, 3, false ) # 254.5896 
+    # var game = GameState.init( [3,4,4,6,6].toDieVals, [1].toSlots, 0, 1, false )
+    # var game = GameState.init( [3,4,4,6,6].toDieVals, [4,5,6].toSlots, 0, 2, false ) #38.9117 
+    # var game = GameState.init( [3,4,4,6,6].toDieVals, [1,2,8,9,10,11,12,13].toSlots, 0, 2, false ) #137.3749 
+    var game = GameState.init( [0,0,0,0,0].toDieVals, [1,2,3,4,5,6,7,8,9,10,11,12,13].toSlots, 0, 3, false ) # 254.5896 
 
     build_ev_cache(game)
 
