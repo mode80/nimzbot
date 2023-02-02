@@ -1,0 +1,36 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build release",
+            "type": "shell",
+            // "command": "nim c -d:release --app:console --opt:speed --hints:off --nimcache:.nimcache yahtzbot.nim",
+            "command": "nim c -d:danger --threads:on --gc:orc --app:console --opt:speed --panics:on --checks:off -t:-march=native -t:-ffast-math --hints:off --nimcache:.nimcache yahtzbot.nim",
+            "problemMatcher": [],
+            "group": { "kind": "build", "isDefault": true },
+            // "presentation": { "reveal": "silent", "revealProblems": "onProblem", "close": true }
+        },
+        { // runs 6x slower than release build 
+            "label": "build debug",
+            "type": "shell",
+            "command": "nim c -d:debug --opt:none --threads:on --gc:orc --showAllMismatches:on --debuginfo --app:console --debugger:native --linedir:on --hints:off --nimcache:.nimcache yahtzbot.nim",
+            // "presentation": { "reveal": "silent", "revealProblems": "onProblem", "close": true }
+        },
+        { // 16x slower than release build 
+            "label": "build with NIM debug profiling",
+            "type": "shell",
+            "command": "nim c -g -d:debug --profiler:on --stacktrace:on --showAllMismatches:on --debuginfo --app:console --debugger:native --linedir:on --hints:off --nimcache:.nimcache yahtzbot.nim",
+            "presentation": { "reveal": "silent", "revealProblems": "onProblem", "close": true }
+        },
+        {
+            "label": "build for XCode release profiling",
+            "type": "shell",
+            // "command": "nim c -d:release --app:console --opt:speed --hints:off --nimcache:.nimcache yahtzbot.nim",
+            "command": "nim c -d:danger --app:console --opt:speed --hints:off --nimcache:.nimcache yahtzbot.nim",
+            "problemMatcher": [],
+            "presentation": { "reveal": "silent", "revealProblems": "onProblem", "close": true }
+        },
+    ]
+}

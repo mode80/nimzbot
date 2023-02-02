@@ -1,4 +1,6 @@
-.vscode
+.vscode/*
+!.vscode/tasks.json
+!.vscode/launch.json
 .idea
 .nimcache
 .DS_Store
