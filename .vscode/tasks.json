@@ -8,7 +8,6 @@
             "type": "shell",
             // "command": "nim c -d:release --app:console --opt:speed --hints:off --nimcache:.nimcache yahtzbot.nim",
             "command": "nim c -d:danger --threads:on --gc:orc --app:console --opt:speed --panics:on --checks:off -t:-march=native -t:-ffast-math --hints:off --nimcache:.nimcache yahtzbot.nim",
-            "problemMatcher": [],
             "group": { "kind": "build", "isDefault": true },
             // "presentation": { "reveal": "silent", "revealProblems": "onProblem", "close": true }
         },
@@ -18,19 +17,28 @@
             "command": "nim c -d:debug --opt:none --threads:on --gc:orc --showAllMismatches:on --debuginfo --app:console --debugger:native --linedir:on --hints:off --nimcache:.nimcache yahtzbot.nim",
             // "presentation": { "reveal": "silent", "revealProblems": "onProblem", "close": true }
         },
+        // generate LTO/PGO profiling for compiler 
+        {
+            "label": "build LTO/PGO data",
+            "type": "shell",
+            "command": "nim c -d:danger --threads:on --gc:orc --app:console --opt:speed --panics:on --checks:off -t:-march=native -t:-ffast-math --hints:off --nimcache:.nimcache --cc:clang --passC:\"-flto -fprofile-instr-generate\" --passL:\"-flto -fprofile-instr-generate\" yahtzbot.nim",
+        }, // process output with: xcrun llvm-profdata merge default.profraw -output data.profdata 
+        // generate LTO/PGO profiling for compiler 
+        {
+            "label": "build release with LTO/PGO data",
+            "type": "shell",
+            "command": "nim c -d:danger --threads:on --gc:orc --app:console --opt:speed --panics:on --checks:off -t:-march=native -t:-ffast-math --hints:off --nimcache:.nimcache --cc:clang --passC:\"-flto -fprofile-instr-use=data.profdata\"  --passL:\"-flto -fprofile-instr-use=data.profdata\"  yahtzbot.nim",
+        },
         { // 16x slower than release build 
             "label": "build with NIM debug profiling",
             "type": "shell",
             "command": "nim c -g -d:debug --profiler:on --stacktrace:on --showAllMismatches:on --debuginfo --app:console --debugger:native --linedir:on --hints:off --nimcache:.nimcache yahtzbot.nim",
-            "presentation": { "reveal": "silent", "revealProblems": "onProblem", "close": true }
         },
         {
             "label": "build for XCode release profiling",
             "type": "shell",
             // "command": "nim c -d:release --app:console --opt:speed --hints:off --nimcache:.nimcache yahtzbot.nim",
             "command": "nim c -d:danger --app:console --opt:speed --hints:off --nimcache:.nimcache yahtzbot.nim",
-            "problemMatcher": [],
-            "presentation": { "reveal": "silent", "revealProblems": "onProblem", "close": true }
         },
     ]
 }

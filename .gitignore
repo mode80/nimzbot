@@ -8,3 +8,4 @@
 lldbnim.py
 yahtzbot.dSYM
 yahtzbot
+*.prof*
